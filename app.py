@@ -628,6 +628,23 @@ def load_attendance(data_dir: Path | None = None) -> pd.DataFrame:
     return frame[ATTENDANCE_COLUMNS]
 
 
+CLEAR_TEST_LABEL = "清除點名以便再測 Clear check-ins for another test"
+CLEAR_TEST_DONE = "已清除，可以再測。 Cleared. You can test again."
+
+
+def clear_attendance_for_test() -> None:
+    """Delete attendance rows so a teacher can check in again. The 4-hour rule stays."""
+    save_attendance(pd.DataFrame(columns=ATTENDANCE_COLUMNS))
+    st.session_state.clear_test_notice = CLEAR_TEST_DONE
+
+
+def render_clear_test_control(key: str) -> None:
+    notice = st.session_state.pop("clear_test_notice", "")
+    if notice:
+        st.success(notice)
+    st.button(CLEAR_TEST_LABEL, key=key, type="primary", on_click=clear_attendance_for_test)
+
+
 def save_attendance(frame: pd.DataFrame, data_dir: Path | None = None) -> None:
     root = ensure_data_dir(data_dir)
     table = frame.copy()
@@ -1395,20 +1412,68 @@ def inject_css() -> None:
             border-radius: 10px;
             padding: 0.65rem 1rem;
         }
-        button[data-testid="stBaseButton-secondary"] {
+        [data-testid="stTextInput"] input,
+        [data-testid="stTextInput"] div[data-baseweb="input"],
+        [data-testid="stTextArea"] textarea,
+        [data-testid="stTextArea"] div[data-baseweb="textarea"],
+        [data-testid="stDateInput"] input,
+        [data-testid="stDateInput"] div[data-baseweb="input"],
+        [data-testid="stTimeInput"] input,
+        [data-testid="stTimeInput"] div[data-baseweb="input"],
+        [data-testid="stNumberInput"] input,
+        [data-testid="stNumberInput"] div[data-baseweb="input"] {
+            background-color: #262730 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            caret-color: #ffffff !important;
+        }
+        [data-testid="stTextInput"] input::placeholder,
+        [data-testid="stTextArea"] textarea::placeholder {
+            color: #d0d4dc !important;
+            -webkit-text-fill-color: #d0d4dc !important;
+            opacity: 1 !important;
+        }
+        [data-testid="stWidgetLabel"],
+        [data-testid="stWidgetLabel"] p,
+        [data-testid="stWidgetLabel"] span {
+            color: #1a2332 !important;
+            -webkit-text-fill-color: #1a2332 !important;
+        }
+        div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"],
+        div[data-testid="stDownloadButton"] button {
             background-color: #fffdf8 !important;
             color: #1a2332 !important;
+            -webkit-text-fill-color: #1a2332 !important;
             border: 1px solid #1a2332 !important;
         }
-        button[data-testid="stBaseButton-secondary"] * {
+        div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"] *,
+        div[data-testid="stDownloadButton"] button * {
             color: #1a2332 !important;
+            -webkit-text-fill-color: #1a2332 !important;
             background-color: transparent !important;
         }
-        button[data-testid="stBaseButton-primary"] {
+        [data-testid="stFormSubmitButton"] button,
+        [data-testid="stFormSubmitButton"] button * {
+            background-color: #1a2332 !important;
             color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            border-color: #1a2332 !important;
         }
-        button[data-testid="stBaseButton-primary"] * {
+        [data-testid="stFormSubmitButton"] button * {
+            background-color: transparent !important;
+        }
+        button[data-testid="stBaseButton-primary"],
+        [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"] {
+            background-color: #ff4b4b !important;
+            border-color: #ff4b4b !important;
             color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+        }
+        button[data-testid="stBaseButton-primary"] *,
+        [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"] * {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            background-color: transparent !important;
         }
         [data-testid="stDialog"],
         [role="dialog"] {
@@ -1526,6 +1591,7 @@ def render_landing() -> None:
 
 def render_settings() -> None:
     st.title("設定 Settings")
+    render_clear_test_control("clear-attendance-settings")
     st.caption("名冊存在 data/roster.csv，老師電郵和公開網址存在 data/settings.json。 The roster is in data/roster.csv. The teacher email and public URL are in data/settings.json.")
     if st.button("返回主頁 Home"):
         st.session_state.page = "landing"
@@ -1699,6 +1765,7 @@ def _consume_browser_gps() -> None:
 
 def render_teacher() -> None:
     st.title("開始課堂 Start class")
+    render_clear_test_control("clear-attendance-teacher")
     if st.button("返回主頁 Home"):
         st.session_state.page = "landing"
         st.rerun()
