@@ -942,23 +942,46 @@ def send_student_email(to_email: str, body_text: str) -> None:
     deliver(message, cfg)
 
 
+def parse_teacher_emails(raw: str) -> list[str]:
+    """Split teacher addresses on comma, semicolon, or newline. One address still works."""
+    text = str(raw or "").replace(";", ",").replace("\r", "\n").replace("\n", ",")
+    found: list[str] = []
+    for part in text.split(","):
+        email = part.strip()
+        if email and email not in found:
+            found.append(email)
+    return found
+
+
+def teacher_email_ok(email: str) -> bool:
+    if any(ch.isspace() for ch in email) or email.count("@") != 1:
+        return False
+    local, domain = email.split("@", 1)
+    return bool(local) and "." in domain and not domain.startswith(".") and not domain.endswith(".")
+
+
 def send_teacher_report(to_email: str, xlsx_path: Path, body_text: str) -> None:
+    """Send the class report to every teacher address."""
     cfg = smtp_config()
     if cfg is None:
         raise RuntimeError("SMTP 尚未設定。 SMTP is not set up.")
-    message = EmailMessage()
-    message["Subject"] = "課堂出席報告 Class attendance report"
-    message["From"] = cfg["SMTP_FROM"]
-    message["To"] = to_email
-    message.set_content(body_text)
+    recipients = parse_teacher_emails(to_email)
+    if not recipients:
+        raise RuntimeError("尚未設定老師電郵。 The teacher email is not set.")
     payload = Path(xlsx_path).read_bytes()
-    message.add_attachment(
-        payload,
-        maintype="application",
-        subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename="attendance.xlsx",
-    )
-    deliver(message, cfg)
+    for recipient in recipients:
+        message = EmailMessage()
+        message["Subject"] = "課堂出席報告 Class attendance report"
+        message["From"] = cfg["SMTP_FROM"]
+        message["To"] = recipient
+        message.set_content(body_text)
+        message.add_attachment(
+            payload,
+            maintype="application",
+            subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename="attendance.xlsx",
+        )
+        deliver(message, cfg)
 
 
 def _send_student_after_save(to_email: str, body_text: str) -> tuple[bool, str]:
@@ -1017,9 +1040,15 @@ def _finish_class(data_dir: Path | None = None) -> dict:
                 "already_sent": True,
                 "message": "這節課的報告已經發送過，不會再寄一次。 This class report was already sent and will not be sent again.",
             }
-        teacher = load_settings(data_dir).get("teacher_email", "").strip()
+        teacher = ", ".join(parse_teacher_emails(load_settings(data_dir).get("teacher_email", "")))
         if not teacher:
             return {"ok": False, "email_sent": False, "message": "尚未設定老師電郵，報告未發送。 The teacher email is not set, so the report was not sent."}
+        if any(not teacher_email_ok(item) for item in parse_teacher_emails(teacher)):
+            return {
+                "ok": False,
+                "email_sent": False,
+                "message": "老師電郵格式不正確，報告未發送。 The teacher email format is not valid, so the report was not sent.",
+            }
         path = ensure_attendance_file(data_dir)
         body = teacher_report_body(session, data_dir)
 
@@ -1093,6 +1122,44 @@ def space_https_origin() -> str:
     return f"https://{owner}-{name}.hf.space"
 
 
+def _header_value(headers: object, name: str) -> str:
+    if not headers:
+        return ""
+    wanted = name.lower()
+    try:
+        getter = getattr(headers, "get", None)
+        if callable(getter):
+            for key in (name, name.lower(), name.title()):
+                raw = getter(key)
+                if raw:
+                    return str(raw).split(",")[0].strip()
+    except Exception:
+        pass
+    try:
+        pairs = list(headers.items())  # type: ignore[attr-defined]
+    except Exception:
+        return ""
+    for key, value in pairs:
+        if str(key).lower() == wanted and value:
+            return str(value).split(",")[0].strip()
+    return ""
+
+
+def _request_host(raw: str) -> str:
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if "://" in text:
+        host = urlparse(text).hostname or ""
+    else:
+        host = text.split("/")[0].strip()
+        if host.startswith("[") and "]" in host:
+            host = host[1 : host.index("]")]
+        elif host.count(":") == 1:
+            host = host.split(":", 1)[0]
+    return host.strip().lower().rstrip(".")
+
+
 def streamlit_cloud_origin() -> str:
     """Live https origin when Streamlit Community Cloud serves this app."""
     candidates: list[str] = []
@@ -1103,22 +1170,30 @@ def streamlit_cloud_origin() -> str:
     except Exception:
         pass
     try:
-        headers = getattr(st.context, "headers", None) or {}
-        host = str(headers.get("Host") or headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        headers = getattr(st.context, "headers", None)
+    except Exception:
+        headers = None
+    for name in ("X-Forwarded-Host", "Host"):
+        host = _header_value(headers, name)
         if host:
             candidates.append(host)
-    except Exception:
-        pass
     for raw in candidates:
-        text = raw.strip()
-        if "://" in text:
-            host = urlparse(text).netloc
-        else:
-            host = text.split("/")[0]
-        host = host.split(":")[0].strip().lower()
+        host = _request_host(raw)
         if host.endswith(".streamlit.app"):
             return "https://" + host
     return ""
+
+
+def apply_live_student_origin() -> str:
+    """On Community Cloud, keep the student link on this request host."""
+    cloud = streamlit_cloud_origin()
+    if not cloud:
+        return ""
+    settings = load_settings()
+    saved = str(settings.get("public_base_url", "")).strip().rstrip("/")
+    if saved != cloud or load_https_origin() != cloud:
+        save_https_origin(cloud)
+    return cloud
 
 
 def student_origin(data_dir: Path | None = None) -> str:
@@ -1305,16 +1380,22 @@ def student_on_grant(token: str, grant: str, data_dir: Path | None = None) -> di
 
 
 def locate_page_url(event: str, start: str, end: str, token: str, grant: str) -> str:
-    query = urlencode(
-        {
-            "event": event,
-            "start": start,
-            "end": end,
-            "token": token,
-            "grant": grant,
-        }
-    )
-    return f"/app/static/locate.html?{query}"
+    """Top-level static page, not a Streamlit route. Cloud must open /app/static/locate.html."""
+    origin = (streamlit_cloud_origin() or student_origin()).rstrip("/")
+    fields = {
+        "event": event,
+        "start": start,
+        "end": end,
+        "token": token,
+        "grant": grant,
+    }
+    if origin:
+        fields["back"] = origin + "/"
+    query = urlencode(fields)
+    path = f"/app/static/locate.html?{query}"
+    if origin:
+        return origin + path
+    return path
 
 
 def _finite_float(raw: str) -> float | None:
@@ -1521,11 +1602,54 @@ def inject_css() -> None:
             border-radius: 14px;
             background: #1f6b4a;
             color: #fffdf8 !important;
+            -webkit-text-fill-color: #fffdf8 !important;
             font-size: 1.45rem;
             font-weight: 700;
             line-height: 1.2;
             text-align: center;
             text-decoration: none;
+        }
+        [data-testid="stDialog"],
+        [data-testid="stDialog"] > div,
+        [data-testid="stDialog"] [slot="title"] {
+            background-color: #fffdf8 !important;
+            color: #1a2332 !important;
+        }
+        [data-testid="stDialog"] [slot="title"],
+        [data-testid="stDialog"] [slot="title"] *,
+        [data-testid="stDialog"] h1,
+        [data-testid="stDialog"] h2,
+        [role="dialog"] h1,
+        [role="dialog"] h2 {
+            color: #1a2332 !important;
+            -webkit-text-fill-color: #1a2332 !important;
+            background-color: transparent !important;
+        }
+        [data-testid="stDialog"] [slot="title"] {
+            background-color: #fffdf8 !important;
+        }
+        [data-testid="stFileUploaderDropzone"] {
+            background-color: #fffdf8 !important;
+            color: #1a2332 !important;
+            border: 1px solid #1a2332 !important;
+        }
+        [data-testid="stFileUploader"] [data-testid="stWidgetLabel"],
+        [data-testid="stFileUploader"] [data-testid="stWidgetLabel"] *,
+        [data-testid="stFileUploaderDropzoneInstructions"],
+        [data-testid="stFileUploaderDropzoneInstructions"] * {
+            color: #1a2332 !important;
+            -webkit-text-fill-color: #1a2332 !important;
+            background-color: #fffdf8 !important;
+        }
+        [data-testid="stFileUploader"] button,
+        [data-testid="stFileUploader"] button * {
+            background-color: #1a2332 !important;
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            border-color: #1a2332 !important;
+        }
+        [data-testid="stFileUploader"] button * {
+            background-color: transparent !important;
         }
         [data-testid="stMain"] h1,
         [data-testid="stMain"] p,
@@ -1636,22 +1760,32 @@ def render_settings() -> None:
     if "other_gps_input" not in st.session_state:
         st.session_state.other_gps_input = other_gps_text()
 
-    st.text_input("老師電郵 Teacher email", key="teacher_email_input")
-    st.text_input(
-        "公開網址 Public URL",
-        key="public_base_url_input",
-        help="學生手機用來開啟 QR 的網址。不要填 localhost。 The URL students open from the QR code. Do not use localhost.",
+    st.text_area(
+        "老師電郵 Teacher email",
+        key="teacher_email_input",
+        help="可填多個電郵，以逗號分隔。 Several addresses are allowed, separated by commas.",
     )
-    st.caption("學生 QR 使用 HTTPS 網址（data/https_origin.txt）。iPhone 在下面這個 http 區網網址不會提供定位。 The student QR code uses the HTTPS URL in data/https_origin.txt. An iPhone will not share location on the http LAN URL below.")
-    st.code(lan_base_url(), language=None)
-    https_origin = load_https_origin()
-    if https_origin:
-        st.caption(f"目前學生網址 Current student URL：{https_origin}")
+    st.caption("可填多個電郵，以逗號分隔。 Several addresses are allowed, separated by commas.")
+    cloud_origin = streamlit_cloud_origin()
+    if cloud_origin:
+        st.caption(f"學生網址 Student URL：{cloud_origin}")
+        st.caption("學生手機請用已開啟的 HTTPS 頁面。 Student phones must use the HTTPS page they already opened.")
+    else:
+        st.text_input(
+            "公開網址 Public URL",
+            key="public_base_url_input",
+            help="學生手機用來開啟 QR 的網址。不要填 localhost。 The URL students open from the QR code. Do not use localhost.",
+        )
+        st.caption("學生 QR 使用 HTTPS 網址（data/https_origin.txt）。iPhone 在下面這個 http 區網網址不會提供定位。 The student QR code uses the HTTPS URL in data/https_origin.txt. An iPhone will not share location on the http LAN URL below.")
+        st.code(lan_base_url(), language=None)
+        https_origin = load_https_origin()
+        if https_origin:
+            st.caption(f"目前學生網址 Current student URL：{https_origin}")
 
-    def fill_lan() -> None:
-        st.session_state.public_base_url_input = lan_base_url()
+        def fill_lan() -> None:
+            st.session_state.public_base_url_input = lan_base_url()
 
-    st.button("填入這個區網網址 Use this LAN URL", on_click=fill_lan)
+        st.button("填入這個區網網址 Use this LAN URL", on_click=fill_lan)
 
     st.text_input(
         "其他地點 GPS Other location GPS",
@@ -1661,11 +1795,12 @@ def render_settings() -> None:
     )
 
     if st.button("儲存設定 Save settings", type="primary"):
-        teacher_email = st.session_state.teacher_email_input.strip()
-        public_base = st.session_state.public_base_url_input.strip()
+        teacher_emails = parse_teacher_emails(st.session_state.teacher_email_input)
+        teacher_email = ", ".join(teacher_emails)
+        public_base = cloud_origin or st.session_state.public_base_url_input.strip()
         other_gps = str(st.session_state.get("other_gps_input", "")).strip()
-        if teacher_email and "@" not in teacher_email:
-            st.error("老師電郵格式不正確。 The teacher email format is not valid.")
+        if any(not teacher_email_ok(item) for item in teacher_emails):
+            st.error("老師電郵格式不正確。請用逗號分隔每個地址。 The teacher email format is not valid. Separate each address with a comma.")
         elif other_gps and parse_gps_pair(other_gps) is None:
             st.error("其他地點 GPS 必須是緯度, 經度兩個數字。 Other location GPS must be two numbers: latitude, longitude.")
         else:
@@ -1937,7 +2072,10 @@ def _accept_student_entry(event: str, token: str, formatted_start: str, formatte
 
 def _show_locate_button(event: str, start: str, end: str, token: str, grant: str) -> None:
     href = html.escape(locate_page_url(event, start, end, token, grant), quote=True)
-    st.markdown(f'<a class="locate-launch" href="{href}">允許定位 Allow location</a>', unsafe_allow_html=True)
+    st.markdown(
+        f'<a class="locate-launch" href="{href}" target="_top" rel="noopener">允許定位 Allow location</a>',
+        unsafe_allow_html=True,
+    )
 
 
 def _dismiss_location_dialog() -> None:
@@ -2066,6 +2204,7 @@ def main() -> None:
     st.set_page_config(page_title="課堂點名系統 Lesson roll call", page_icon="📋", layout="centered")
     inject_css()
     ensure_data_dir()
+    apply_live_student_origin()
     if "page" not in st.session_state:
         st.session_state.page = "landing"
     _consume_browser_gps()
