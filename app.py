@@ -26,6 +26,7 @@ from urllib.parse import urlencode, urlparse
 import pandas as pd
 import qrcode
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image
 
 APP_DIR = Path(__file__).resolve().parent
@@ -2092,12 +2093,184 @@ def _accept_student_entry(event: str, token: str, formatted_start: str, formatte
     return granted
 
 
+_PARENT_BRIDGE = """
+<div id="rolls-bridge"></div>
+<script>
+(function () {
+  try {
+  var parentWin = window.parent || window;
+  var doc = parentWin.document;
+  if (!doc || !doc.body) return;
+
+  function labelOf(el) {
+    var parts = [
+      el.getAttribute && el.getAttribute("aria-label"),
+      el.getAttribute && el.getAttribute("title"),
+      el.innerText
+    ];
+    return parts.filter(Boolean).join(" ").replace(/\\s+/g, " ").trim().slice(0, 180);
+  }
+
+  function isClassControl(el) {
+    var text = labelOf(el);
+    return /開始|設定|確認|允許定位|清除點名|返回主頁|儲存|下載|完成點名|取消|再開啟|填入這個區網|Home|Start|Settings|Confirm|Allow location|Finish check-in|Cancel/.test(text);
+  }
+
+  function hrefOf(el) {
+    return (el.href || (el.getAttribute && el.getAttribute("href")) || "");
+  }
+
+  function removeChrome(el) {
+    var node = el;
+    for (var i = 0; i < 6 && node && node !== doc.body; i++) {
+      if (node.id && node.id.indexOf("rolls-") === 0) return;
+      if (node.querySelector && node.querySelector("[id^='rolls-']")) return;
+      var role = node.getAttribute && node.getAttribute("role");
+      var pos = parentWin.getComputedStyle(node).position;
+      if (pos === "fixed" || pos === "sticky" || role === "dialog") {
+        node.remove();
+        return;
+      }
+      node = node.parentElement;
+    }
+    if (el && el.remove) el.remove();
+  }
+
+  function sweep() {
+    if (parentWin.__rollsSweeping) return;
+    parentWin.__rollsSweeping = true;
+    try {
+      var nodes = doc.querySelectorAll("a, button, [role='button'], [role='dialog'], iframe, div");
+      for (var n = 0; n < nodes.length; n++) {
+        var el = nodes[n];
+        if (!el || !el.isConnected) continue;
+        if (el.id && el.id.indexOf("rolls-") === 0) continue;
+        if (isClassControl(el)) continue;
+        var href = hrefOf(el);
+        var label = labelOf(el);
+        if (/share\\.streamlit\\.io/i.test(href) || /view profile/i.test(label)) {
+          removeChrome(el);
+          continue;
+        }
+        var style = parentWin.getComputedStyle(el);
+        if (style.position !== "fixed" && style.position !== "sticky") continue;
+        var rect = el.getBoundingClientRect();
+        if (rect.width < 12 || rect.height < 12 || rect.width > 280 || rect.height > 280) continue;
+        var vw = parentWin.innerWidth || 0;
+        var vh = parentWin.innerHeight || 0;
+        if (rect.right < vw - 36 || rect.bottom < vh - 36 || rect.left < vw - 320) continue;
+        el.remove();
+      }
+    } finally {
+      parentWin.__rollsSweeping = false;
+    }
+  }
+
+  if (!parentWin.__rollsObserver) {
+    sweep();
+    parentWin.__rollsObserver = new parentWin.MutationObserver(function () { sweep(); });
+    parentWin.__rollsObserver.observe(doc.documentElement, {childList: true, subtree: true});
+  } else {
+    sweep();
+  }
+
+  if ("__SHOW_LOCATION__" !== "yes") return;
+
+  var button = doc.getElementById("rolls-allow-location");
+  if (!button) {
+    button = doc.createElement("button");
+    button.id = "rolls-allow-location";
+    button.type = "button";
+    button.textContent = "允許定位 Allow location";
+    button.style.display = "flex";
+    button.style.alignItems = "center";
+    button.style.justifyContent = "center";
+    button.style.width = "100%";
+    button.style.minHeight = "4.5rem";
+    button.style.margin = "0.8rem 0 1rem";
+    button.style.padding = "1rem 1.1rem";
+    button.style.boxSizing = "border-box";
+    button.style.border = "0";
+    button.style.borderRadius = "14px";
+    button.style.background = "#1f6b4a";
+    button.style.color = "#ffffff";
+    button.style.webkitTextFillColor = "#ffffff";
+    button.style.fontSize = "1.45rem";
+    button.style.fontWeight = "700";
+    button.style.lineHeight = "1.2";
+    button.style.textAlign = "center";
+    button.style.cursor = "pointer";
+  }
+  var status = doc.getElementById("rolls-location-status");
+  if (!status) {
+    status = doc.createElement("p");
+    status.id = "rolls-location-status";
+    status.style.margin = "0.4rem 0 0";
+    status.style.color = "#1a2332";
+    status.style.fontSize = "1.05rem";
+  }
+  var frame = window.frameElement;
+  var slot = frame && frame.closest("[data-testid='stElementContainer']");
+  var parentNode = slot && slot.parentNode;
+  if (parentNode) {
+    parentNode.insertBefore(button, slot.nextSibling);
+    parentNode.insertBefore(status, button.nextSibling);
+  } else {
+    doc.body.appendChild(button);
+    doc.body.appendChild(status);
+  }
+  if (button.getAttribute("data-bound") === "yes") return;
+  button.setAttribute("data-bound", "yes");
+  button.addEventListener("click", function () {
+    if (!parentWin.navigator.geolocation) {
+      status.textContent = "請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。 Tap the icon on the left of the address bar, open the site settings, set Location to Allow, then tap Allow location again. You can also go to Settings → Safari → Location → Allow.";
+      status.style.color = "#8a2b2b";
+      return;
+    }
+    button.disabled = true;
+    status.style.color = "#1a2332";
+    status.textContent = "正在讀取定位… Reading location…";
+    parentWin.navigator.geolocation.getCurrentPosition(function (pos) {
+      var url = new URL(parentWin.location.href);
+      url.searchParams.set("lat", String(pos.coords.latitude));
+      url.searchParams.set("lng", String(pos.coords.longitude));
+      url.searchParams.set("accuracy", String(pos.coords.accuracy));
+      url.searchParams.delete("geo");
+      parentWin.location.replace(url.toString());
+    }, function (err) {
+      button.disabled = false;
+      if (err && err.code === 1) {
+        var denied = new URL(parentWin.location.href);
+        denied.searchParams.set("geo", "denied");
+        denied.searchParams.delete("lat");
+        denied.searchParams.delete("lng");
+        denied.searchParams.delete("accuracy");
+        parentWin.location.replace(denied.toString());
+        return;
+      }
+      status.style.color = "#8a2b2b";
+      status.textContent = "未能取得定位，請再按一次「允許定位」。 Location was not received. Tap Allow location again.";
+    }, {enableHighAccuracy: true, maximumAge: 0, timeout: 20000});
+  });
+  } catch (err) {}
+})();
+</script>
+"""
+
+
+def _parent_bridge(*, show_location: bool) -> None:
+    """Run on the open class page. The button is added to the top-level document."""
+    html_doc = _PARENT_BRIDGE.replace("__SHOW_LOCATION__", "yes" if show_location else "no")
+    components.html(html_doc, height=1, width=1)
+
+
 def _show_locate_button(event: str, start: str, end: str, token: str, grant: str) -> None:
-    href = html.escape(locate_page_url(event, start, end, token, grant), quote=True)
-    st.markdown(
-        f'<a class="locate-launch" href="{href}" target="_top" rel="noopener">允許定位 Allow location</a>',
-        unsafe_allow_html=True,
+    del event, start, end, token, grant
+    st.markdown("**現在開啟定位功能？ Turn on location now?**")
+    st.write(
+        "開啟後才會讀取一次定位。取消則停留在此頁，不會記錄出席。 Location is read once after you turn it on. Cancel stays on this page and does not record attendance."
     )
+    _parent_bridge(show_location=True)
 
 
 def _dismiss_location_dialog() -> None:
@@ -2225,6 +2398,7 @@ def render_student(event: str, start: str, end: str, token: str) -> None:
 def main() -> None:
     st.set_page_config(page_title="課堂點名系統 Lesson roll call", page_icon="📋", layout="centered")
     inject_css()
+    _parent_bridge(show_location=False)
     ensure_data_dir()
     apply_live_student_origin()
     if "page" not in st.session_state:
