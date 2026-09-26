@@ -6,6 +6,8 @@ student phone is a different browser and does not share st.session_state.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
 import io
 import json
@@ -273,6 +275,45 @@ def save_settings(teacher_email: str, public_base_url: str, data_dir: Path | Non
         payload["teacher_email"] = teacher_email.strip()
         payload["public_base_url"] = public_base_url.strip()
         _atomic_write(_settings_path(data_dir), json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+
+
+def _hash_teacher_code(code: str, salt: bytes) -> str:
+    digest = hashlib.pbkdf2_hmac("sha256", code.encode("utf-8"), salt, 120_000)
+    return digest.hex()
+
+
+def teacher_code_is_set(data_dir: Path | None = None) -> bool:
+    data = _read_settings_file(data_dir)
+    return bool(str(data.get("teacher_code_hash", "")).strip()) and bool(str(data.get("teacher_code_salt", "")).strip())
+
+
+def save_teacher_code(code: str, data_dir: Path | None = None) -> bool:
+    """Store a hash of the teacher code in data/settings.json. The code itself is not saved."""
+    text = str(code or "")
+    if not text.strip():
+        return False
+    salt = secrets.token_bytes(16)
+    digest = _hash_teacher_code(text, salt)
+    with _DATA_LOCK:
+        payload = _read_settings_file(data_dir)
+        payload["teacher_code_salt"] = salt.hex()
+        payload["teacher_code_hash"] = digest
+        _atomic_write(_settings_path(data_dir), json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
+    return True
+
+
+def teacher_code_matches(code: str, data_dir: Path | None = None) -> bool:
+    data = _read_settings_file(data_dir)
+    salt_hex = str(data.get("teacher_code_salt", "")).strip()
+    expected = str(data.get("teacher_code_hash", "")).strip()
+    if not salt_hex or not expected or not str(code or ""):
+        return False
+    try:
+        salt = bytes.fromhex(salt_hex)
+    except ValueError:
+        return False
+    actual = _hash_teacher_code(str(code), salt)
+    return hmac.compare_digest(actual, expected)
 
 
 def load_other_gps(data_dir: Path | None = None) -> tuple[float, float] | None:
@@ -1717,7 +1758,32 @@ def student_query() -> tuple[str, str, str, str] | None:
     return event, start, end, token
 
 
+def render_teacher_gate() -> None:
+    """Public page. The only sentence is the scan line. Start, Settings, roster, and the report stay hidden."""
+    st.write("請掃描老師畫面上的二維碼 Scan the QR code on the teacher’s screen.")
+    if not teacher_code_is_set():
+        with st.form("set-teacher-code"):
+            code = st.text_input("設定教師密碼 Set teacher code", type="password")
+            if st.form_submit_button("儲存 Save", type="primary"):
+                if save_teacher_code(code):
+                    st.rerun()
+                else:
+                    st.error("請輸入密碼。 Enter a code.")
+        return
+    with st.form("teacher-entry"):
+        code = st.text_input("教師進入 Teacher entry", type="password")
+        if st.form_submit_button("進入 Enter", type="primary"):
+            if teacher_code_matches(code):
+                st.session_state.teacher_unlocked = True
+                st.rerun()
+            else:
+                st.error("密碼不正確 The code is incorrect.")
+
+
 def render_landing() -> None:
+    if not st.session_state.get("teacher_unlocked"):
+        render_teacher_gate()
+        return
     st.title("課堂點名系統 Lesson roll call")
     st.write(
         "老師開一節課，學生用手機掃 QR，核對學籍並開啟一次定位。 The teacher starts a lesson. Students scan the QR code, confirm their record, and share location once. "
@@ -1742,6 +1808,9 @@ def render_landing() -> None:
 
 
 def render_settings() -> None:
+    if not st.session_state.get("teacher_unlocked"):
+        render_teacher_gate()
+        return
     st.title("設定 Settings")
     render_clear_test_control("clear-attendance-settings")
     st.caption("名冊存在 data/roster.csv，老師電郵和公開網址存在 data/settings.json。 The roster is in data/roster.csv. The teacher email and public URL are in data/settings.json.")
@@ -1927,6 +1996,9 @@ def _consume_browser_gps() -> None:
 
 
 def render_teacher() -> None:
+    if not st.session_state.get("teacher_unlocked"):
+        render_teacher_gate()
+        return
     st.title("開始課堂 Start class")
     render_clear_test_control("clear-attendance-teacher")
     if st.button("返回主頁 Home"):
@@ -2103,51 +2175,193 @@ _PARENT_BRIDGE = """
 <script>
 (function () {
   try {
+  function ownBits(el) {
+    if (!el || el.nodeType !== 1) return "";
+    var aria = (el.getAttribute && el.getAttribute("aria-label")) || "";
+    var title = (el.getAttribute && el.getAttribute("title")) || "";
+    var href = "";
+    try {
+      href = el.href || (el.getAttribute && el.getAttribute("href")) || "";
+    } catch (err) {
+      href = (el.getAttribute && el.getAttribute("href")) || "";
+    }
+    var direct = "";
+    var nodes = el.childNodes || [];
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].nodeType === 3) direct += nodes[i].nodeValue || "";
+    }
+    return direct + " " + aria + " " + title + " " + href;
+  }
+
   function labelOf(el) {
-    var parts = [
-      el.getAttribute && el.getAttribute("aria-label"),
-      el.getAttribute && el.getAttribute("title"),
-      el.innerText
-    ];
-    return parts.filter(Boolean).join(" ").replace(/\\s+/g, " ").trim().slice(0, 180);
+    return ownBits(el).replace(/\\s+/g, " ").trim().slice(0, 180);
   }
 
-  function hrefOf(el) {
-    return (el.href || (el.getAttribute && el.getAttribute("href")) || "");
-  }
-
-  function profileMarker(el) {
-    var blob = ((el.innerText || "") + " " + hrefOf(el) + " " + ((el.getAttribute && el.getAttribute("aria-label")) || "")).slice(0, 5000);
-    return /2009bfa3-lang|view profile|share\\.streamlit\\.io/i.test(blob);
-  }
-
-  function hasLiveForm(el) {
-    return !!(el.querySelector && el.querySelector("[data-testid='stForm'], [data-testid='stTextInput'], [data-testid='stFormSubmitButton']"));
-  }
+  var PROFILE_RE = /2009bfa3-lang|view profile|share\\.streamlit\\.io/i;
+  var RESULT_RE = /準時出席|可能不在校園/;
+  var FORM_SEL = "[data-testid='stForm'], [data-testid='stTextInput']";
 
   function isOwnClassButton(el) {
-    if (profileMarker(el)) return false;
     var tag = (el.tagName || "").toLowerCase();
     if (tag !== "button" && tag !== "a" && (!el.getAttribute || el.getAttribute("role") !== "button")) return false;
     var text = labelOf(el);
     if (!text || text.length > 80) return false;
-    return /開始|設定|確認|允許定位|清除點名|返回主頁|儲存|下載|完成點名|取消|再開啟|填入這個區網|Home|Start|Settings|Confirm|Allow location|Finish check-in|Cancel/.test(text);
+    if (PROFILE_RE.test(text)) return false;
+    return /開始|設定|確認|允許定位|清除點名|返回主頁|儲存|下載|完成點名|取消|再開啟|填入這個區網|進入|Home|Start|Settings|Confirm|Allow location|Finish check-in|Cancel|Enter|Save/.test(text);
   }
 
-  function peelProfile(node) {
-    if (!node || !node.isConnected || (node.id && node.id.indexOf("rolls-") === 0)) return;
-    if (node === node.ownerDocument.body || node === node.ownerDocument.documentElement) {
-      var topKids = node.children || [];
-      for (var t = topKids.length - 1; t >= 0; t--) peelProfile(topKids[t]);
-      return;
+  function ensureStyle(root) {
+    try {
+      if (!root || (root.querySelector && root.querySelector("#rolls-profile-hide"))) return;
+      var owner = root.ownerDocument || root;
+      var style = owner.createElement("style");
+      style.id = "rolls-profile-hide";
+      style.textContent = "[data-rolls-profile='yes']{display:none !important;}";
+      if (root.nodeType === 9) (root.head || root.documentElement).appendChild(style);
+      else root.appendChild(style);
+    } catch (err) {}
+  }
+
+  function hostParent(el) {
+    if (!el) return null;
+    if (el.parentElement) return el.parentElement;
+    try {
+      var root = el.getRootNode && el.getRootNode();
+      if (root && root.host) return root.host;
+    } catch (err) {}
+    return null;
+  }
+
+  function insideForm(el) {
+    var node = el;
+    while (node) {
+      if (node.matches && node.matches(FORM_SEL)) return true;
+      node = hostParent(node);
     }
-    if (!profileMarker(node)) return;
-    if (hasLiveForm(node)) {
-      var kids = node.children || [];
-      for (var i = kids.length - 1; i >= 0; i--) peelProfile(kids[i]);
-      return;
+    return false;
+  }
+
+  function coversApp(el) {
+    try {
+      var rect = el.getBoundingClientRect();
+      var view = el.ownerDocument.defaultView || window;
+      var vw = view.innerWidth || 1;
+      var vh = view.innerHeight || 1;
+      return rect.width > vw * 0.92 && rect.height > vh * 0.85;
+    } catch (err) {
+      return false;
     }
-    node.remove();
+  }
+
+  function mergeInfo(into, extra) {
+    into.profile = into.profile || extra.profile;
+    into.form = into.form || extra.form;
+    into.result = into.result || extra.result;
+  }
+
+  function inspect(node, hits, seen, parentWin) {
+    var info = {profile: false, form: false, result: false};
+    if (!node) return info;
+    if (node.nodeType === 1) {
+      if (node.id && String(node.id).indexOf("rolls-") === 0) return info;
+      var bits = ownBits(node);
+      info.profile = PROFILE_RE.test(bits);
+      info.form = !!(node.matches && node.matches(FORM_SEL));
+      info.result = RESULT_RE.test(bits);
+      if (node.shadowRoot) {
+        ensureStyle(node.shadowRoot);
+        if (parentWin && !node.shadowRoot.__rollsObserved) {
+          node.shadowRoot.__rollsObserved = true;
+          try {
+            new parentWin.MutationObserver(function () { sweep(parentWin); }).observe(node.shadowRoot, {childList: true, subtree: true});
+          } catch (err) {}
+        }
+        mergeInfo(info, inspect(node.shadowRoot, hits, seen, parentWin));
+      }
+      var tag = String(node.tagName || "");
+      if (tag.indexOf("-") !== -1 && !node.shadowRoot) {
+        try {
+          var rendered = node.innerText || "";
+          if (PROFILE_RE.test(rendered)) info.profile = true;
+          if (RESULT_RE.test(rendered)) info.result = true;
+        } catch (err) {}
+      }
+      if (tag.toLowerCase() === "iframe") {
+        try {
+          var idoc = node.contentDocument;
+          if (idoc && idoc.documentElement && seen.indexOf(idoc) === -1) {
+            seen.push(idoc);
+            ensureStyle(idoc);
+            inspect(idoc.documentElement, hits, seen, idoc.defaultView || parentWin);
+          }
+        } catch (err) {}
+      }
+    }
+    var kids = node.children || [];
+    for (var c = 0; c < kids.length; c++) mergeInfo(info, inspect(kids[c], hits, seen, parentWin));
+    if (node.nodeType !== 1) return info;
+    if (node === node.ownerDocument.body || node === node.ownerDocument.documentElement) return info;
+    if (coversApp(node) || info.form || info.result || isOwnClassButton(node) || insideForm(node)) return info;
+    if (info.profile) hits.push(node);
+    return info;
+  }
+
+  function removeOuter(hits) {
+    var outer = [];
+    for (var i = 0; i < hits.length; i++) {
+      var el = hits[i];
+      if (!el || !el.isConnected) continue;
+      var covered = false;
+      var parent = hostParent(el);
+      while (parent) {
+        if (hits.indexOf(parent) !== -1) { covered = true; break; }
+        parent = hostParent(parent);
+      }
+      if (!covered) outer.push(el);
+    }
+    for (var r = 0; r < outer.length; r++) {
+      try {
+        outer[r].setAttribute("data-rolls-profile", "yes");
+        outer[r].remove();
+      } catch (err) {}
+    }
+  }
+
+  function hideCorner(node, seen) {
+    if (!node) return;
+    if (node.nodeType === 1) {
+      var skip = (node.id && String(node.id).indexOf("rolls-") === 0) || isOwnClassButton(node) || insideForm(node);
+      if (!skip && node !== node.ownerDocument.body && node !== node.ownerDocument.documentElement) {
+        try {
+          var view = node.ownerDocument.defaultView || window;
+          var style = view.getComputedStyle(node);
+          if ((style.position === "fixed" || style.position === "sticky") && !coversApp(node)) {
+            var rect = node.getBoundingClientRect();
+            var vw = view.innerWidth || 0;
+            var vh = view.innerHeight || 0;
+            var text = "";
+            try { text = (node.innerText || "").slice(0, 80); } catch (err) { text = ""; }
+            var corner = rect.width >= 12 && rect.height >= 12 && rect.width <= 160 && rect.height <= 160 && rect.right >= vw - 36 && rect.bottom >= vh - 36 && rect.left >= vw - 220;
+            if (corner && !RESULT_RE.test(text) && !RESULT_RE.test(ownBits(node))) {
+              node.remove();
+              return;
+            }
+          }
+        } catch (err) {}
+      }
+      if (node.shadowRoot) hideCorner(node.shadowRoot, seen);
+      if (String(node.tagName || "").toLowerCase() === "iframe") {
+        try {
+          var idoc = node.contentDocument;
+          if (idoc && idoc.body && seen.indexOf(idoc) === -1) {
+            seen.push(idoc);
+            hideCorner(idoc.body, seen);
+          }
+        } catch (err) {}
+      }
+    }
+    var kids = node.children || [];
+    for (var i = kids.length - 1; i >= 0; i--) hideCorner(kids[i], seen);
   }
 
   function sweep(parentWin) {
@@ -2155,23 +2369,12 @@ _PARENT_BRIDGE = """
     if (!doc || !doc.body || parentWin.__rollsSweeping) return;
     parentWin.__rollsSweeping = true;
     try {
-      peelProfile(doc.body);
-      var nodes = doc.querySelectorAll("a, button, [role='button'], div");
-      for (var n = 0; n < nodes.length; n++) {
-        var el = nodes[n];
-        if (!el || !el.isConnected) continue;
-        if (el.id && el.id.indexOf("rolls-") === 0) continue;
-        if (isOwnClassButton(el)) continue;
-        if (el.closest && el.closest("[data-testid='stForm'], [data-testid='stTextInput']")) continue;
-        var style = parentWin.getComputedStyle(el);
-        if (style.position !== "fixed" && style.position !== "sticky") continue;
-        var rect = el.getBoundingClientRect();
-        if (rect.width < 12 || rect.height < 12 || rect.width > 160 || rect.height > 160) continue;
-        var vw = parentWin.innerWidth || 0;
-        var vh = parentWin.innerHeight || 0;
-        if (rect.right < vw - 36 || rect.bottom < vh - 36 || rect.left < vw - 220) continue;
-        el.remove();
-      }
+      ensureStyle(doc);
+      var hits = [];
+      var seen = [doc];
+      inspect(doc.documentElement, hits, seen, parentWin);
+      removeOuter(hits);
+      hideCorner(doc.documentElement, [doc]);
     } finally {
       parentWin.__rollsSweeping = false;
     }
@@ -2184,6 +2387,9 @@ _PARENT_BRIDGE = """
       if (!parentWin.__rollsObserver) {
         parentWin.__rollsObserver = new parentWin.MutationObserver(function () { sweep(parentWin); });
         parentWin.__rollsObserver.observe(parentWin.document.documentElement, {childList: true, subtree: true});
+      }
+      if (!parentWin.__rollsSweepTimer) {
+        parentWin.__rollsSweepTimer = parentWin.setInterval(function () { sweep(parentWin); }, 400);
       }
     } catch (err) {}
   }
@@ -2429,6 +2635,9 @@ def main() -> None:
     query = student_query()
     if query is not None:
         render_student(*query)
+        return
+    if not st.session_state.get("teacher_unlocked"):
+        render_teacher_gate()
         return
     page = st.session_state.page
     if page == "settings":
