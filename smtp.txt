@@ -1,5 +1,1 @@
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=2009bfa3@gmail@gmail.com
-SMTP_PASSWORD=udii zdip rbgl wdfw
-SMTP_FROM=2009bfa3@gmail.com
+
