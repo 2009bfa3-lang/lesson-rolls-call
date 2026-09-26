@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>允許定位</title>
+  <title>允許定位 Allow location</title>
   <style>
     html, body {
       margin: 0;
@@ -22,10 +22,12 @@
       margin: 0 0 0.4rem;
       font-size: 1.7rem;
       font-weight: 700;
+      color: #1a2332;
     }
     p {
       margin: 0 0 1rem;
       line-height: 1.45;
+      color: #1a2332;
     }
     button {
       appearance: none;
@@ -38,9 +40,9 @@
       border: 0;
       border-radius: 14px;
       background: #1f6b4a;
-      color: #fffdf8;
+      color: #ffffff;
       font: inherit;
-      font-size: 1.5rem;
+      font-size: 1.35rem;
       font-weight: 700;
       cursor: pointer;
       touch-action: manipulation;
@@ -59,10 +61,10 @@
 </head>
 <body>
   <main>
-    <h1>課堂點名</h1>
+    <h1>課堂點名 Class roll call</h1>
     <p id="when"></p>
     <p id="status"></p>
-    <button type="button" id="allow">允許定位</button>
+    <button type="button" id="allow">允許定位 Allow location</button>
   </main>
   <script>
     const params = new URLSearchParams(location.search);
@@ -99,11 +101,11 @@
 
     button.addEventListener("click", () => {
       if (!params.get("token") || !params.get("grant")) {
-        showError("此二維碼已失效，請重新掃描老師畫面上的二維碼");
+        showError("此二維碼已失效，請重新掃描老師畫面上的二維碼。 This QR code has expired. Scan the code on the teacher's screen again.");
         return;
       }
       if (!navigator.geolocation) {
-        showError("請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。");
+        showError("請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。 Tap the icon on the left of the address bar, open the site settings, set Location to Allow, then tap Allow location again. You can also go to Settings → Safari → Location → Allow.");
         return;
       }
       navigator.geolocation.getCurrentPosition(
@@ -114,23 +116,23 @@
             accuracy: pos.coords.accuracy
           });
           if (!path) {
-            showError("此二維碼已失效，請重新掃描老師畫面上的二維碼");
+            showError("此二維碼已失效，請重新掃描老師畫面上的二維碼。 This QR code has expired. Scan the code on the teacher's screen again.");
             return;
           }
           window.location.replace(path);
         },
         (err) => {
           if (err && err.code === 1) {
-            showError("請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。");
+            showError("請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。 Tap the icon on the left of the address bar, open the site settings, set Location to Allow, then tap Allow location again. You can also go to Settings → Safari → Location → Allow.");
             return;
           }
-          showError("未能取得定位，請再按一次「允許定位」。");
+          showError("未能取得定位，請再按一次「允許定位」。 Location was not received. Tap Allow location again.");
         },
         { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
       );
       button.disabled = true;
       status.className = "";
-      status.textContent = "正在讀取定位…";
+      status.textContent = "正在讀取定位… Reading location…";
     });
   </script>
 </body>
