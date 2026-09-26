@@ -90,7 +90,9 @@
       Object.keys(extra).forEach((key) => {
         next.set(key, String(extra[key]));
       });
-      return "/?" + next.toString();
+      const back = params.get("back") || "";
+      const root = back.indexOf("https://") === 0 ? back.replace(/\/$/, "") : location.origin;
+      return root + "/?" + next.toString();
     }
 
     function showError(message) {
