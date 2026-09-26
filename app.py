@@ -1669,6 +1669,28 @@ def inject_css() -> None:
         [data-testid="stCaptionContainer"] p {
             color: #1a2332 !important;
         }
+        #MainMenu,
+        footer,
+        header,
+        [data-testid="stHeader"],
+        [data-testid="stToolbar"],
+        [data-testid="stToolbarActions"],
+        [data-testid="stDecoration"],
+        [data-testid="stStatusWidget"],
+        [data-testid="stMainMenu"],
+        [data-testid="stMainMenuPopover"],
+        a[href*="share.streamlit.io"],
+        button[title="View profile"],
+        button[aria-label="View profile"],
+        [aria-label="View profile"],
+        [aria-label="View Profile"] {
+            display: none !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            max-height: 0 !important;
+            overflow: hidden !important;
+            pointer-events: none !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
