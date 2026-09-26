@@ -682,23 +682,6 @@ def load_attendance(data_dir: Path | None = None) -> pd.DataFrame:
     return frame[ATTENDANCE_COLUMNS]
 
 
-CLEAR_TEST_LABEL = "清除點名以便再測 Clear check-ins for another test"
-CLEAR_TEST_DONE = "已清除，可以再測。 Cleared. You can test again."
-
-
-def clear_attendance_for_test() -> None:
-    """Delete attendance rows so a teacher can check in again. The 4-hour rule stays."""
-    save_attendance(pd.DataFrame(columns=ATTENDANCE_COLUMNS))
-    st.session_state.clear_test_notice = CLEAR_TEST_DONE
-
-
-def render_clear_test_control(key: str) -> None:
-    notice = st.session_state.pop("clear_test_notice", "")
-    if notice:
-        st.success(notice)
-    st.button(CLEAR_TEST_LABEL, key=key, type="primary", on_click=clear_attendance_for_test)
-
-
 def save_attendance(frame: pd.DataFrame, data_dir: Path | None = None) -> None:
     root = ensure_data_dir(data_dir)
     table = frame.copy()
@@ -1812,7 +1795,6 @@ def render_settings() -> None:
         render_teacher_gate()
         return
     st.title("設定 Settings")
-    render_clear_test_control("clear-attendance-settings")
     st.caption("名冊存在 data/roster.csv，老師電郵和公開網址存在 data/settings.json。 The roster is in data/roster.csv. The teacher email and public URL are in data/settings.json.")
     if st.button("返回主頁 Home"):
         st.session_state.page = "landing"
@@ -2009,7 +1991,6 @@ def render_teacher() -> None:
         render_teacher_gate()
         return
     st.title("開始課堂 Start class")
-    render_clear_test_control("clear-attendance-teacher")
     if st.button("返回主頁 Home"):
         st.session_state.page = "landing"
         st.rerun()
