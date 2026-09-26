@@ -1908,6 +1908,15 @@ def render_settings() -> None:
             else:
                 st.success("已儲存老師電郵和公開網址。 Saved the teacher email and public URL.")
 
+    st.divider()
+    with st.form("change-teacher-code"):
+        new_code = st.text_input("更改教師密碼 Change teacher code", type="password")
+        if st.form_submit_button("儲存新密碼 Save new code", type="primary"):
+            if save_teacher_code(new_code):
+                st.success("已更新教師密碼。 The teacher code was updated.")
+            else:
+                st.error("請輸入密碼。 Enter a code.")
+
 
 def render_attendance_board() -> None:
     try:
