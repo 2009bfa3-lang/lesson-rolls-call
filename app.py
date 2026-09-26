@@ -19,6 +19,7 @@ import threading
 import urllib.error
 import urllib.request
 from datetime import date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 from email.message import EmailMessage
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
@@ -164,6 +165,20 @@ def format_hhmm(value: time) -> str:
     return f"{value.hour:02d}:{value.minute:02d}"
 
 
+HK = ZoneInfo("Asia/Hong_Kong")
+
+
+def hong_kong_now() -> datetime:
+    """Naive Asia/Hong_Kong wall clock. Streamlit Cloud's own clock is UTC."""
+    return datetime.now(HK).replace(tzinfo=None, microsecond=0)
+
+
+def as_hong_kong(value: datetime) -> datetime:
+    if value.tzinfo is not None:
+        value = value.astimezone(HK)
+    return value.replace(tzinfo=None, microsecond=0)
+
+
 def parse_date(value: str | date) -> date | None:
     if isinstance(value, datetime):
         return value.date()
@@ -176,15 +191,13 @@ def parse_date(value: str | date) -> date | None:
 
 
 def classify_checkin(checkin: datetime, class_date: date, start: time) -> tuple[str, str]:
-    """Compare check-in with class_date + start_time in Mac local time.
+    """Compare check-in with class_date + start_time in Asia/Hong_Kong.
 
     check-in <= start → 準時出席
     start < check-in <= start + 15 minutes → 遲到
     check-in > start + 15 minutes → 缺席
     """
-    if checkin.tzinfo is not None:
-        checkin = checkin.astimezone().replace(tzinfo=None)
-    checkin = checkin.replace(microsecond=0)
+    checkin = as_hong_kong(checkin)
     start_dt = datetime.combine(class_date, start.replace(second=0, microsecond=0))
     late_deadline = start_dt + timedelta(minutes=15)
     if checkin <= start_dt:
@@ -195,8 +208,9 @@ def classify_checkin(checkin: datetime, class_date: date, start: time) -> tuple[
 
 
 def suggested_times(now: datetime | None = None) -> tuple[time, time]:
-    """Default a new lesson to the current local minute, for one hour."""
-    current = (now or datetime.now()).replace(second=0, microsecond=0)
+    """Default a new lesson to the current Hong Kong minute, for one hour."""
+    current = as_hong_kong(now) if now is not None else hong_kong_now()
+    current = current.replace(second=0, microsecond=0)
     start = current.time()
     end_dt = current + timedelta(hours=1)
     if end_dt.date() != current.date() or end_dt.time() <= start:
@@ -209,9 +223,7 @@ def class_has_ended(session: dict, now: datetime | None = None) -> bool:
     end = parse_hhmm(session.get("end_time", ""))
     if class_date is None or end is None:
         return False
-    current = now or datetime.now()
-    if current.tzinfo is not None:
-        current = current.astimezone().replace(tzinfo=None)
+    current = as_hong_kong(now) if now is not None else hong_kong_now()
     return current > datetime.combine(class_date, end)
 
 
@@ -516,7 +528,7 @@ def start_lesson(
             "started_at": (
                 existing.get("started_at")
                 if same and existing.get("started_at")
-                else datetime.now().replace(microsecond=0).isoformat(timespec="seconds")
+                else hong_kong_now().isoformat(timespec="seconds")
             ),
             "report_sent": bool(existing.get("report_sent")) if same else False,
             "report_sent_at": existing.get("report_sent_at") if same else None,
@@ -708,10 +720,7 @@ def checkin_too_soon(
     latest = latest_checkin_at(email, student_number, data_dir)
     if latest is None:
         return False
-    moment = when or datetime.now()
-    if moment.tzinfo is not None:
-        moment = moment.astimezone().replace(tzinfo=None)
-    moment = moment.replace(microsecond=0)
+    moment = as_hong_kong(when) if when is not None else hong_kong_now()
     return moment - latest < CHECKIN_GAP
 
 
@@ -763,10 +772,7 @@ def record_checkin(
     checkin: datetime | None = None,
 ) -> dict:
     """Save one attendance row, then try the student email. Never claims a send that did not happen."""
-    when = checkin or datetime.now()
-    if when.tzinfo is not None:
-        when = when.astimezone().replace(tzinfo=None)
-    when = when.replace(microsecond=0)
+    when = as_hong_kong(checkin) if checkin is not None else hong_kong_now()
     class_date = parse_date(session.get("class_date", ""))
     start = parse_hhmm(session.get("start_time", ""))
     if class_date is None or start is None:
@@ -822,13 +828,12 @@ def record_checkin(
     }
 
 
-def _secrets_file() -> Path:
-    return APP_DIR / ".streamlit" / "secrets.toml"
-
-
 def _from_secrets(key: str) -> str:
-    if not _secrets_file().exists():
-        return ""
+    """Read one key from st.secrets.
+
+    Community Cloud fills st.secrets from the Secrets box. That store is not
+    the repo copy of .streamlit/secrets.toml, so a missing file must not skip it.
+    """
     try:
         if key in st.secrets:
             return str(st.secrets[key]).strip()
@@ -1063,7 +1068,7 @@ def _finish_class(data_dir: Path | None = None) -> dict:
     with _DATA_LOCK:
         session = load_session(data_dir) or session
         session["report_sent"] = True
-        session["report_sent_at"] = datetime.now().replace(microsecond=0).isoformat(timespec="seconds")
+        session["report_sent_at"] = hong_kong_now().isoformat(timespec="seconds")
         save_session(session, data_dir)
     return {"ok": True, "email_sent": True, "message": "已把出席報告寄給老師。 The attendance report was sent to the teacher."}
 
@@ -1948,7 +1953,7 @@ def render_teacher() -> None:
         st.caption(f"名冊 {len(roster)} 人，讀自 data/roster.csv。 Roster of {len(roster)}, read from data/roster.csv.")
 
     session = load_session() or {}
-    default_date = date.today()
+    default_date = hong_kong_now().date()
     parsed_date = parse_date(session.get("class_date", "")) if session else None
     if parsed_date is not None:
         default_date = parsed_date
@@ -2098,10 +2103,6 @@ _PARENT_BRIDGE = """
 <script>
 (function () {
   try {
-  var parentWin = window.parent || window;
-  var doc = parentWin.document;
-  if (!doc || !doc.body) return;
-
   function labelOf(el) {
     var parts = [
       el.getAttribute && el.getAttribute("aria-label"),
@@ -2111,54 +2112,64 @@ _PARENT_BRIDGE = """
     return parts.filter(Boolean).join(" ").replace(/\\s+/g, " ").trim().slice(0, 180);
   }
 
-  function isClassControl(el) {
-    var text = labelOf(el);
-    return /開始|設定|確認|允許定位|清除點名|返回主頁|儲存|下載|完成點名|取消|再開啟|填入這個區網|Home|Start|Settings|Confirm|Allow location|Finish check-in|Cancel/.test(text);
-  }
-
   function hrefOf(el) {
     return (el.href || (el.getAttribute && el.getAttribute("href")) || "");
   }
 
-  function removeChrome(el) {
-    var node = el;
-    for (var i = 0; i < 6 && node && node !== doc.body; i++) {
-      if (node.id && node.id.indexOf("rolls-") === 0) return;
-      if (node.querySelector && node.querySelector("[id^='rolls-']")) return;
-      var role = node.getAttribute && node.getAttribute("role");
-      var pos = parentWin.getComputedStyle(node).position;
-      if (pos === "fixed" || pos === "sticky" || role === "dialog") {
-        node.remove();
-        return;
-      }
-      node = node.parentElement;
-    }
-    if (el && el.remove) el.remove();
+  function profileMarker(el) {
+    var blob = ((el.innerText || "") + " " + hrefOf(el) + " " + ((el.getAttribute && el.getAttribute("aria-label")) || "")).slice(0, 5000);
+    return /2009bfa3-lang|view profile|share\\.streamlit\\.io/i.test(blob);
   }
 
-  function sweep() {
-    if (parentWin.__rollsSweeping) return;
+  function hasLiveForm(el) {
+    return !!(el.querySelector && el.querySelector("[data-testid='stForm'], [data-testid='stTextInput'], [data-testid='stFormSubmitButton']"));
+  }
+
+  function isOwnClassButton(el) {
+    if (profileMarker(el)) return false;
+    var tag = (el.tagName || "").toLowerCase();
+    if (tag !== "button" && tag !== "a" && (!el.getAttribute || el.getAttribute("role") !== "button")) return false;
+    var text = labelOf(el);
+    if (!text || text.length > 80) return false;
+    return /開始|設定|確認|允許定位|清除點名|返回主頁|儲存|下載|完成點名|取消|再開啟|填入這個區網|Home|Start|Settings|Confirm|Allow location|Finish check-in|Cancel/.test(text);
+  }
+
+  function peelProfile(node) {
+    if (!node || !node.isConnected || (node.id && node.id.indexOf("rolls-") === 0)) return;
+    if (node === node.ownerDocument.body || node === node.ownerDocument.documentElement) {
+      var topKids = node.children || [];
+      for (var t = topKids.length - 1; t >= 0; t--) peelProfile(topKids[t]);
+      return;
+    }
+    if (!profileMarker(node)) return;
+    if (hasLiveForm(node)) {
+      var kids = node.children || [];
+      for (var i = kids.length - 1; i >= 0; i--) peelProfile(kids[i]);
+      return;
+    }
+    node.remove();
+  }
+
+  function sweep(parentWin) {
+    var doc = parentWin.document;
+    if (!doc || !doc.body || parentWin.__rollsSweeping) return;
     parentWin.__rollsSweeping = true;
     try {
-      var nodes = doc.querySelectorAll("a, button, [role='button'], [role='dialog'], iframe, div");
+      peelProfile(doc.body);
+      var nodes = doc.querySelectorAll("a, button, [role='button'], div");
       for (var n = 0; n < nodes.length; n++) {
         var el = nodes[n];
         if (!el || !el.isConnected) continue;
         if (el.id && el.id.indexOf("rolls-") === 0) continue;
-        if (isClassControl(el)) continue;
-        var href = hrefOf(el);
-        var label = labelOf(el);
-        if (/share\\.streamlit\\.io/i.test(href) || /view profile/i.test(label)) {
-          removeChrome(el);
-          continue;
-        }
+        if (isOwnClassButton(el)) continue;
+        if (el.closest && el.closest("[data-testid='stForm'], [data-testid='stTextInput']")) continue;
         var style = parentWin.getComputedStyle(el);
         if (style.position !== "fixed" && style.position !== "sticky") continue;
         var rect = el.getBoundingClientRect();
-        if (rect.width < 12 || rect.height < 12 || rect.width > 280 || rect.height > 280) continue;
+        if (rect.width < 12 || rect.height < 12 || rect.width > 160 || rect.height > 160) continue;
         var vw = parentWin.innerWidth || 0;
         var vh = parentWin.innerHeight || 0;
-        if (rect.right < vw - 36 || rect.bottom < vh - 36 || rect.left < vw - 320) continue;
+        if (rect.right < vw - 36 || rect.bottom < vh - 36 || rect.left < vw - 220) continue;
         el.remove();
       }
     } finally {
@@ -2166,13 +2177,23 @@ _PARENT_BRIDGE = """
     }
   }
 
-  if (!parentWin.__rollsObserver) {
-    sweep();
-    parentWin.__rollsObserver = new parentWin.MutationObserver(function () { sweep(); });
-    parentWin.__rollsObserver.observe(doc.documentElement, {childList: true, subtree: true});
-  } else {
-    sweep();
+  function watch(parentWin) {
+    try {
+      if (!parentWin || !parentWin.document || !parentWin.document.body) return;
+      sweep(parentWin);
+      if (!parentWin.__rollsObserver) {
+        parentWin.__rollsObserver = new parentWin.MutationObserver(function () { sweep(parentWin); });
+        parentWin.__rollsObserver.observe(parentWin.document.documentElement, {childList: true, subtree: true});
+      }
+    } catch (err) {}
   }
+
+  watch(window.parent || window);
+  try { watch(window.top); } catch (err) {}
+
+  var parentWin = window.parent || window;
+  try { if (window.top && window.top.document && window.top.document.body) parentWin = window.top; } catch (err) {}
+  var doc = parentWin.document;
 
   if ("__SHOW_LOCATION__" !== "yes") return;
 
@@ -2306,6 +2327,7 @@ def _ask_before_location(event: str, start: str, end: str, token: str, grant: st
 
 
 def render_student(event: str, start: str, end: str, token: str) -> None:
+    _parent_bridge(show_location=False)
     st.title("課堂點名 Class roll call")
     class_date = parse_date(event)
     start_t = parse_hhmm(start)
