@@ -1311,7 +1311,10 @@ def inject_css() -> None:
             overflow-x: hidden;
             max-width: 100%;
         }
-        .stApp { background: #f4f1ea; }
+        .stApp {
+            background: #f4f1ea;
+            color: #1a2332;
+        }
         [data-testid="stSidebar"],
         [data-testid="stSidebarCollapsedControl"] { display: none; }
         [data-testid="stMainBlockContainer"],
@@ -1390,6 +1393,19 @@ def inject_css() -> None:
         [data-testid="stMain"] p,
         [data-testid="stCaptionContainer"] {
             overflow-wrap: anywhere;
+        }
+        [data-testid="stHeading"],
+        [data-testid="stHeading"] h1,
+        [data-testid="stHeading"] h2,
+        [data-testid="stHeading"] h3,
+        [data-testid="stHeading"] span,
+        [data-testid="stMarkdownContainer"],
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stMarkdownContainer"] span,
+        [data-testid="stMarkdownContainer"] li,
+        [data-testid="stCaptionContainer"],
+        [data-testid="stCaptionContainer"] p {
+            color: #1a2332 !important;
         }
         </style>
         """,
