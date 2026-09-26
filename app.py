@@ -21,7 +21,7 @@ import urllib.request
 from datetime import date, datetime, time, timedelta
 from email.message import EmailMessage
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import pandas as pd
 import qrcode
@@ -57,22 +57,22 @@ SMTP_KEYS = (
     "SMTP_FROM",
 )
 
-INVALID_INPUT = "你所輸入的資料不正確，請再輸入"
-TOO_SOON = "距離上次點名未滿4小時，不能再次輸入。"
+INVALID_INPUT = "你所輸入的資料不正確，請再輸入。 The details are incorrect. Please enter them again."
+TOO_SOON = "距離上次點名未滿4小時，不能再次輸入。 It has been less than 4 hours since the last roll call. You cannot enter again."
 CHECKIN_GAP = timedelta(hours=4)
-THANK_YOU = "謝謝，你會收到學校電郵回覆作實"
+THANK_YOU = "謝謝，你會收到學校電郵回覆作實。 Thank you. You will receive a school email to confirm this."
 STATUS_ON_TIME = "準時出席"
 STATUS_LATE = "遲到"
 STATUS_ABSENT = "缺席"
-EMAIL_ON_TIME = "你準時出席"
-EMAIL_LATE = "你已經遲到"
-EMAIL_ABSENT = "你已經缺席"
-STUDENT_EMAIL_SKIPPED = "出席已記錄，但電郵未發送：尚未設定 SMTP。"
-STUDENT_EMAIL_FAILED = "出席已記錄，但電郵未發送。"
-TEACHER_EMAIL_SKIPPED = "報告未發送：尚未設定 SMTP。"
-QR_INVALID = "此二維碼已失效，請重新掃描老師畫面上的二維碼"
-GPS_REQUIRED = "請開啟定位功能後再點名"
-GPS_DENIED = "請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。"
+EMAIL_ON_TIME = "你準時出席。 You are on time."
+EMAIL_LATE = "你已經遲到。 You are late."
+EMAIL_ABSENT = "你已經缺席。 You are absent."
+STUDENT_EMAIL_SKIPPED = "出席已記錄，但電郵未發送：尚未設定 SMTP。 Attendance was saved, but the email was not sent: SMTP is not set up."
+STUDENT_EMAIL_FAILED = "出席已記錄，但電郵未發送。 Attendance was saved, but the email was not sent."
+TEACHER_EMAIL_SKIPPED = "報告未發送：尚未設定 SMTP。 The report was not sent: SMTP is not set up."
+QR_INVALID = "此二維碼已失效，請重新掃描老師畫面上的二維碼。 This QR code has expired. Scan the code on the teacher's screen again."
+GPS_REQUIRED = "請開啟定位功能後再點名。 Turn on location, then check in."
+GPS_DENIED = "請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。 Tap the icon on the left of the address bar, open the site settings, set Location to Allow, then tap Allow location again. You can also go to Settings → Safari → Location → Allow."
 QR_TTL = timedelta(seconds=30)
 LOCATION_RADIUS_M = 200
 LOCATION_UNSET = "未設定課堂位置"
@@ -87,8 +87,33 @@ FIXED_CAMPUSES = {
     CAMPUS_BETHANIE: (22.26229126734515, 114.13573632952154),
     CAMPUS_WANCHAI: (22.280207758952102, 114.17013747580481),
 }
-OTHER_GPS_REQUIRED = "請先到設定輸入其他地點的 GPS"
-GPS_LOOKUP_FAILED = "查不到這個地址。請在 Google 地圖長按建築物，再把緯度和經度貼到 current GPS。"
+OTHER_GPS_REQUIRED = "請先到設定輸入其他地點的 GPS。 Go to Settings and enter the GPS for the other location first."
+
+
+def bilingual_status(status: str) -> str:
+    return {
+        STATUS_ON_TIME: "準時出席 On time",
+        STATUS_LATE: "遲到 Late",
+        STATUS_ABSENT: "缺席 Absent",
+    }.get(str(status), str(status))
+
+
+def bilingual_location(text: str) -> str:
+    return {
+        LOCATION_UNSET: "未設定課堂位置 Location for this class is not set",
+        LOCATION_MATCH: "位置相符 Location matches",
+        LOCATION_AWAY: "可能不在校園 Possibly off campus",
+    }.get(str(text), str(text))
+
+
+def bilingual_campus(name: str) -> str:
+    return {
+        CAMPUS_BETHANIE: "1-伯大尼校園 1-Bethanie campus",
+        CAMPUS_WANCHAI: "2-灣仔校園 2-Wan Chai campus",
+        CAMPUS_OTHERS: "3-其他地點 3-Other location",
+        CAMPUS_OTHERS_NAME: "其他地點 Other location",
+    }.get(str(name), str(name))
+GPS_LOOKUP_FAILED = "查不到這個地址。請在 Google 地圖長按建築物，再把緯度和經度貼到 current GPS。 This address was not found. In Google Maps, press and hold the building, then paste the latitude and longitude into current GPS."
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 NOMINATIM_USER_AGENT = "LessonRollsCall/1.0 (classroom roll-call)"
 GRANT_TTL = timedelta(hours=3)
@@ -526,7 +551,7 @@ def _clean_roster_frame(df: pd.DataFrame) -> pd.DataFrame:
     frame = frame.loc[:, ~frame.columns.duplicated()]
     missing = [column for column in ROSTER_COLUMNS if column not in frame.columns]
     if missing:
-        raise ValueError("CSV 缺少欄位：" + ", ".join(missing))
+        raise ValueError("CSV 缺少欄位：" + ", ".join(missing) + "。 The CSV is missing columns: " + ", ".join(missing) + ".")
     frame = frame[ROSTER_COLUMNS].fillna("")
     for column in ROSTER_COLUMNS:
         frame[column] = frame[column].map(lambda value: str(value).strip())
@@ -547,7 +572,7 @@ def read_roster_upload(raw: bytes) -> pd.DataFrame:
         except UnicodeDecodeError as exc:
             last_error = exc
     if frame is None:
-        raise ValueError("無法讀取 CSV 編碼，請用 UTF-8 儲存。") from last_error
+        raise ValueError("無法讀取 CSV 編碼，請用 UTF-8 儲存。 The CSV encoding could not be read. Save it as UTF-8.") from last_error
     return _clean_roster_frame(frame)
 
 
@@ -693,7 +718,7 @@ def already_checked_in(email: str, student_number: str, data_dir: Path | None = 
 
 def validate_identity(email: str, student_number: str, data_dir: Path | None = None) -> dict:
     if not str(email or "").strip() or not str(student_number or "").strip():
-        return {"ok": False, "message": "請輸入學生電郵和學生編號"}
+        return {"ok": False, "message": "請輸入學生電郵和學生編號。 Please enter the student email and student number."}
     with _DATA_LOCK:
         student = find_student(email, student_number, data_dir)
         if student is None:
@@ -727,7 +752,7 @@ def record_checkin(
     class_date = parse_date(session.get("class_date", ""))
     start = parse_hhmm(session.get("start_time", ""))
     if class_date is None or start is None:
-        return {"ok": False, "email_sent": False, "message": "課堂時間不正確。"}
+        return {"ok": False, "email_sent": False, "message": "課堂時間不正確。 The class time is not valid."}
 
     with _DATA_LOCK:
         identity = validate_identity(email, student_number, data_dir)
@@ -866,7 +891,7 @@ def deliver(message: EmailMessage, cfg: dict) -> None:
     try:
         port = int(str(cfg["SMTP_PORT"]).strip())
     except ValueError as exc:
-        raise RuntimeError("SMTP_PORT 必須是數字。") from exc
+        raise RuntimeError("SMTP_PORT 必須是數字。 SMTP_PORT must be a number.") from exc
     if port == 465:
         server_cm = smtplib.SMTP_SSL(host, port, timeout=20)
     else:
@@ -884,16 +909,16 @@ def student_email_body(status_line: str, outside_flag: str) -> str:
     """Status line, plus 可能不在校園 only when that attendance flag is 是."""
     line = str(status_line or "").strip()
     if str(outside_flag or "").strip() == "是":
-        return f"{line}\n可能不在校園"
+        return f"{line}\n可能不在校園 Possibly off campus"
     return line
 
 
 def send_student_email(to_email: str, body_text: str) -> None:
     cfg = smtp_config()
     if cfg is None:
-        raise RuntimeError("SMTP 尚未設定")
+        raise RuntimeError("SMTP 尚未設定。 SMTP is not set up.")
     message = EmailMessage()
-    message["Subject"] = "課堂點名確認"
+    message["Subject"] = "課堂點名確認 Roll-call confirmation"
     message["From"] = cfg["SMTP_FROM"]
     message["To"] = to_email
     message.set_content(body_text)
@@ -903,9 +928,9 @@ def send_student_email(to_email: str, body_text: str) -> None:
 def send_teacher_report(to_email: str, xlsx_path: Path, body_text: str) -> None:
     cfg = smtp_config()
     if cfg is None:
-        raise RuntimeError("SMTP 尚未設定")
+        raise RuntimeError("SMTP 尚未設定。 SMTP is not set up.")
     message = EmailMessage()
-    message["Subject"] = "課堂出席報告"
+    message["Subject"] = "課堂出席報告 Class attendance report"
     message["From"] = cfg["SMTP_FROM"]
     message["To"] = to_email
     message.set_content(body_text)
@@ -936,15 +961,15 @@ def teacher_report_body(session: dict, data_dir: Path | None = None) -> str:
         for status in attendance["status"].tolist():
             if status in counts:
                 counts[status] += 1
-    remarks = session.get("remarks") or "（無）"
+    remarks = session.get("remarks") or "（無） None"
     return (
-        "附件是這一節的出席紀錄。\n\n"
-        f"日期：{session.get('class_date')}\n"
-        f"時間：{session.get('start_time')}–{session.get('end_time')}\n"
-        f"備註：{remarks}\n"
-        f"準時出席：{counts[STATUS_ON_TIME]}\n"
-        f"遲到：{counts[STATUS_LATE]}\n"
-        f"缺席：{counts[STATUS_ABSENT]}\n"
+        "附件是這一節的出席紀錄。 The attached file is this lesson's attendance record.\n\n"
+        f"日期 Date：{session.get('class_date')}\n"
+        f"時間 Time：{session.get('start_time')}–{session.get('end_time')}\n"
+        f"備註 Remarks：{remarks}\n"
+        f"準時出席 On time：{counts[STATUS_ON_TIME]}\n"
+        f"遲到 Late：{counts[STATUS_LATE]}\n"
+        f"缺席 Absent：{counts[STATUS_ABSENT]}\n"
     )
 
 
@@ -967,17 +992,17 @@ def _finish_class(data_dir: Path | None = None) -> dict:
     with _DATA_LOCK:
         session = load_session(data_dir)
         if not session:
-            return {"ok": False, "email_sent": False, "message": "尚未開始課堂。"}
+            return {"ok": False, "email_sent": False, "message": "尚未開始課堂。 The class has not started."}
         if session.get("report_sent"):
             return {
                 "ok": False,
                 "email_sent": False,
                 "already_sent": True,
-                "message": "這節課的報告已經發送過，不會再寄一次。",
+                "message": "這節課的報告已經發送過，不會再寄一次。 This class report was already sent and will not be sent again.",
             }
         teacher = load_settings(data_dir).get("teacher_email", "").strip()
         if not teacher:
-            return {"ok": False, "email_sent": False, "message": "尚未設定老師電郵，報告未發送。"}
+            return {"ok": False, "email_sent": False, "message": "尚未設定老師電郵，報告未發送。 The teacher email is not set, so the report was not sent."}
         path = ensure_attendance_file(data_dir)
         body = teacher_report_body(session, data_dir)
 
@@ -986,14 +1011,14 @@ def _finish_class(data_dir: Path | None = None) -> dict:
     try:
         send_teacher_report(teacher, path, body)
     except Exception as exc:
-        return {"ok": False, "email_sent": False, "message": f"報告未發送：{exc}"}
+        return {"ok": False, "email_sent": False, "message": f"報告未發送：{exc} The report was not sent: {exc}"}
 
     with _DATA_LOCK:
         session = load_session(data_dir) or session
         session["report_sent"] = True
         session["report_sent_at"] = datetime.now().replace(microsecond=0).isoformat(timespec="seconds")
         save_session(session, data_dir)
-    return {"ok": True, "email_sent": True, "message": "已把出席報告寄給老師。"}
+    return {"ok": True, "email_sent": True, "message": "已把出席報告寄給老師。 The attendance report was sent to the teacher."}
 
 
 def normalize_base(base: str) -> str:
@@ -1027,7 +1052,7 @@ def load_https_origin(data_dir: Path | None = None) -> str:
 def save_https_origin(url: str, data_dir: Path | None = None) -> None:
     text = str(url or "").strip().rstrip("/")
     if not text.startswith("https://"):
-        raise ValueError("學生網址必須是 https。")
+        raise ValueError("學生網址必須是 https。 The student URL must be https.")
     _atomic_write(https_origin_path(data_dir), (text + "\n").encode("utf-8"))
     settings = load_settings(data_dir)
     save_settings(settings.get("teacher_email", ""), text, data_dir)
@@ -1051,8 +1076,39 @@ def space_https_origin() -> str:
     return f"https://{owner}-{name}.hf.space"
 
 
+def streamlit_cloud_origin() -> str:
+    """Live https origin when Streamlit Community Cloud serves this app."""
+    candidates: list[str] = []
+    try:
+        raw = str(getattr(st.context, "url", "") or "").strip()
+        if raw:
+            candidates.append(raw)
+    except Exception:
+        pass
+    try:
+        headers = getattr(st.context, "headers", None) or {}
+        host = str(headers.get("Host") or headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if host:
+            candidates.append(host)
+    except Exception:
+        pass
+    for raw in candidates:
+        text = raw.strip()
+        if "://" in text:
+            host = urlparse(text).netloc
+        else:
+            host = text.split("/")[0]
+        host = host.split(":")[0].strip().lower()
+        if host.endswith(".streamlit.app"):
+            return "https://" + host
+    return ""
+
+
 def student_origin(data_dir: Path | None = None) -> str:
     """HTTPS origin used for the teacher QR. Plain http cannot read iPhone GPS."""
+    cloud = streamlit_cloud_origin()
+    if cloud:
+        return cloud
     hosted = space_https_origin()
     if hosted:
         return hosted
@@ -1332,10 +1388,27 @@ def inject_css() -> None:
                 padding-right: 1.25rem !important;
             }
         }
-        div.stButton > button {
+        div.stButton > button,
+        div[data-testid="stDownloadButton"] button,
+        div[data-testid="stFormSubmitButton"] button {
             width: 100%;
             border-radius: 10px;
             padding: 0.65rem 1rem;
+        }
+        button[data-testid="stBaseButton-secondary"] {
+            background-color: #fffdf8 !important;
+            color: #1a2332 !important;
+            border: 1px solid #1a2332 !important;
+        }
+        button[data-testid="stBaseButton-secondary"] * {
+            color: #1a2332 !important;
+            background-color: transparent !important;
+        }
+        button[data-testid="stBaseButton-primary"] {
+            color: #ffffff !important;
+        }
+        button[data-testid="stBaseButton-primary"] * {
+            color: #ffffff !important;
         }
         [data-testid="stDialog"],
         [role="dialog"] {
@@ -1428,34 +1501,33 @@ def student_query() -> tuple[str, str, str, str] | None:
 
 
 def render_landing() -> None:
-    st.title("課堂點名系統")
+    st.title("課堂點名系統 Lesson roll call")
     st.write(
-        "老師開一節課，學生用手機掃 QR，核對學籍並開啟一次定位。"
-        "名冊、課堂和出席都寫在這部電腦的 data 資料夾，"
-        "所以另一部手機開啟連結也會讀到同一班。"
+        "老師開一節課，學生用手機掃 QR，核對學籍並開啟一次定位。 The teacher starts a lesson. Students scan the QR code, confirm their record, and share location once. "
+        "名冊、課堂和出席都寫在這部電腦的 data 資料夾，所以另一部手機開啟連結也會讀到同一班。 The roster, the lesson, and attendance are stored in the data folder on this computer, so another phone that opens the link sees the same class."
     )
     roster = load_roster()
     session = load_session()
     if roster.empty:
-        st.info("尚未上傳名冊。請先到「設定」。")
+        st.info("尚未上傳名冊。請先到「設定」。 No roster yet. Go to Settings first.")
     else:
-        st.caption(f"名冊已有 {len(roster)} 人。")
+        st.caption(f"名冊已有 {len(roster)} 人。 The roster has {len(roster)} students.")
     if session:
         st.caption(
-            f"進行中的課堂：{session['class_date']} {session['start_time']}–{session['end_time']}"
+            f"進行中的課堂 Current class：{session['class_date']} {session['start_time']}–{session['end_time']}"
         )
-    if st.button("開始使用", type="primary"):
+    if st.button("開始使用 Start", type="primary"):
         st.session_state.page = "teacher"
         st.rerun()
-    if st.button("設定"):
+    if st.button("設定 Settings"):
         st.session_state.page = "settings"
         st.rerun()
 
 
 def render_settings() -> None:
-    st.title("設定")
-    st.caption("名冊存在 data/roster.csv，老師電郵和公開網址存在 data/settings.json。")
-    if st.button("返回主頁"):
+    st.title("設定 Settings")
+    st.caption("名冊存在 data/roster.csv，老師電郵和公開網址存在 data/settings.json。 The roster is in data/roster.csv. The teacher email and public URL are in data/settings.json.")
+    if st.button("返回主頁 Home"):
         st.session_state.page = "landing"
         st.rerun()
 
@@ -1463,29 +1535,29 @@ def render_settings() -> None:
     if not template_path.exists():
         template_path = ensure_data_dir() / "roster_template.csv"
     st.download_button(
-        "下載名冊範本",
+        "下載名冊範本 Download roster template",
         data=template_path.read_bytes() if template_path.exists() else b"",
         file_name="roster_template.csv",
         mime="text/csv",
     )
-    st.caption("欄位可以是 Student name、Student Email、Student Number，或 student_name、student_email、student_number，也接受姓名、電郵、學號。")
+    st.caption("欄位可以是 Student name、Student Email、Student Number，或 student_name、student_email、student_number，也接受姓名、電郵、學號。 Columns may be Student name, Student Email, Student Number, or student_name, student_email, student_number. 姓名, 電郵, and 學號 are also accepted.")
 
-    upload = st.file_uploader("上傳名冊 CSV", type=["csv"])
-    if st.button("儲存名冊"):
+    upload = st.file_uploader("上傳名冊 CSV Upload roster CSV", type=["csv"])
+    if st.button("儲存名冊 Save roster"):
         if upload is None:
-            st.error("請先選擇 CSV 檔。")
+            st.error("請先選擇 CSV 檔。 Choose a CSV file first.")
         else:
             try:
                 frame = read_roster_upload(upload.getvalue())
                 count = save_roster(frame)
             except Exception as exc:
-                st.error(f"讀取 CSV 失敗：{exc}")
+                st.error(f"讀取 CSV 失敗：{exc} Could not read the CSV: {exc}")
             else:
-                st.success(f"已儲存 {count} 位學生到 data/roster.csv。")
+                st.success(f"已儲存 {count} 位學生到 data/roster.csv。 Saved {count} students to data/roster.csv.")
 
     roster = load_roster()
     if roster.empty:
-        st.info("尚未有名冊。")
+        st.info("尚未有名冊。 There is no roster yet.")
     else:
         st.dataframe(roster, width="stretch", hide_index=True)
 
@@ -1498,52 +1570,52 @@ def render_settings() -> None:
     if "other_gps_input" not in st.session_state:
         st.session_state.other_gps_input = other_gps_text()
 
-    st.text_input("老師電郵", key="teacher_email_input")
+    st.text_input("老師電郵 Teacher email", key="teacher_email_input")
     st.text_input(
-        "公開網址",
+        "公開網址 Public URL",
         key="public_base_url_input",
-        help="學生手機用來開啟 QR 的網址。不要填 localhost。",
+        help="學生手機用來開啟 QR 的網址。不要填 localhost。 The URL students open from the QR code. Do not use localhost.",
     )
-    st.caption("學生 QR 使用 HTTPS 網址（data/https_origin.txt）。iPhone 在下面這個 http 區網網址不會提供定位。")
+    st.caption("學生 QR 使用 HTTPS 網址（data/https_origin.txt）。iPhone 在下面這個 http 區網網址不會提供定位。 The student QR code uses the HTTPS URL in data/https_origin.txt. An iPhone will not share location on the http LAN URL below.")
     st.code(lan_base_url(), language=None)
     https_origin = load_https_origin()
     if https_origin:
-        st.caption(f"目前學生網址：{https_origin}")
+        st.caption(f"目前學生網址 Current student URL：{https_origin}")
 
     def fill_lan() -> None:
         st.session_state.public_base_url_input = lan_base_url()
 
-    st.button("填入這個區網網址", on_click=fill_lan)
+    st.button("填入這個區網網址 Use this LAN URL", on_click=fill_lan)
 
     st.text_input(
-        "其他地點 GPS",
+        "其他地點 GPS Other location GPS",
         key="other_gps_input",
         placeholder="22.28000, 114.17000",
-        help="緯度, 經度。開始課堂選 3-others 時使用。",
+        help="緯度, 經度。開始課堂選 3-others 時使用。 Latitude, longitude. Used when the class location is 3-others.",
     )
 
-    if st.button("儲存設定", type="primary"):
+    if st.button("儲存設定 Save settings", type="primary"):
         teacher_email = st.session_state.teacher_email_input.strip()
         public_base = st.session_state.public_base_url_input.strip()
         other_gps = str(st.session_state.get("other_gps_input", "")).strip()
         if teacher_email and "@" not in teacher_email:
-            st.error("老師電郵格式不正確。")
+            st.error("老師電郵格式不正確。 The teacher email format is not valid.")
         elif other_gps and parse_gps_pair(other_gps) is None:
-            st.error("其他地點 GPS 必須是緯度, 經度兩個數字。")
+            st.error("其他地點 GPS 必須是緯度, 經度兩個數字。 Other location GPS must be two numbers: latitude, longitude.")
         else:
             save_settings(teacher_email, public_base)
             save_other_gps(other_gps)
             if public_base and ("localhost" in public_base or "127.0.0.1" in public_base):
-                st.warning("已儲存，但這個公開網址是 localhost，手機打不開。請改用上面的區網網址。")
+                st.warning("已儲存，但這個公開網址是 localhost，手機打不開。請改用上面的區網網址。 Saved, but this public URL is localhost, so a phone cannot open it. Use the LAN URL above.")
             else:
-                st.success("已儲存老師電郵和公開網址。")
+                st.success("已儲存老師電郵和公開網址。 Saved the teacher email and public URL.")
 
 
 def render_attendance_board() -> None:
     try:
         attendance = load_attendance()
     except Exception:
-        st.warning("出席表正在更新，請稍候。")
+        st.warning("出席表正在更新，請稍候。 The attendance sheet is updating. Please wait.")
         return
     on_time = late = absent = 0
     if not attendance.empty:
@@ -1555,22 +1627,38 @@ def render_attendance_board() -> None:
             elif status == STATUS_ABSENT:
                 absent += 1
     left, middle, right = st.columns(3)
-    left.metric("準時出席", on_time)
-    middle.metric("遲到", late)
-    right.metric("缺席", absent)
+    left.metric("準時出席 On time", on_time)
+    middle.metric("遲到 Late", late)
+    right.metric("缺席 Absent", absent)
     if attendance.empty:
-        st.info("這一節還沒有人點名。")
+        st.info("這一節還沒有人點名。 Nobody has checked in for this lesson yet.")
         return
+    shown = attendance.copy()
+    if "status" in shown.columns:
+        shown["status"] = shown["status"].map(bilingual_status)
+    if "location_result" in shown.columns:
+        shown["location_result"] = shown["location_result"].map(bilingual_location)
+    if "campus_name" in shown.columns:
+        shown["campus_name"] = shown["campus_name"].map(bilingual_campus)
     st.dataframe(
-        attendance,
+        shown,
         width="stretch",
         hide_index=True,
         column_config={
-            "distance_meters": st.column_config.TextColumn("距離（米）"),
-            "location_result": st.column_config.TextColumn("位置結果"),
-            "campus_name": st.column_config.TextColumn("校園"),
-            "可能不在校園": st.column_config.TextColumn("可能不在校園"),
-            "map_url": st.column_config.LinkColumn("地圖", display_text="開啟地圖"),
+            "student_name": st.column_config.TextColumn("姓名 Name"),
+            "student_email": st.column_config.TextColumn("學生電郵 Student email"),
+            "student_number": st.column_config.TextColumn("學生編號 Student number"),
+            "checkin_time": st.column_config.TextColumn("點名時間 Check-in time"),
+            "class_date": st.column_config.TextColumn("課堂日期 Class date"),
+            "status": st.column_config.TextColumn("出席狀態 Attendance"),
+            "latitude": st.column_config.TextColumn("緯度 Latitude"),
+            "longitude": st.column_config.TextColumn("經度 Longitude"),
+            "accuracy_meters": st.column_config.TextColumn("準確度（米） Accuracy (m)"),
+            "distance_meters": st.column_config.TextColumn("距離（米） Distance (m)"),
+            "location_result": st.column_config.TextColumn("位置結果 Location result"),
+            "campus_name": st.column_config.TextColumn("校園 Campus"),
+            "可能不在校園": st.column_config.TextColumn("可能不在校園 Possibly off campus"),
+            "map_url": st.column_config.LinkColumn("地圖 Map", display_text="開啟地圖 Open map"),
         },
     )
     for row in attendance.to_dict(orient="records"):
@@ -1580,17 +1668,19 @@ def render_attendance_board() -> None:
         if not lat or not lng or not link:
             continue
         accuracy = str(row.get("accuracy_meters", "")).strip()
-        accuracy_text = f"，約 {accuracy} 米" if accuracy else ""
+        accuracy_text = f"，約 {accuracy} 米 about {accuracy} m" if accuracy else ""
         distance = str(row.get("distance_meters", "")).strip()
-        location_result = str(row.get("location_result", "")).strip()
-        campus_name = str(row.get("campus_name", "")).strip()
+        location_result = bilingual_location(str(row.get("location_result", "")).strip())
+        campus_name = bilingual_campus(str(row.get("campus_name", "")).strip())
         outside = str(row.get("可能不在校園", "")).strip()
-        distance_text = f"，距離 {distance} 米" if distance else ""
+        distance_text = f"，距離 {distance} 米 distance {distance} m" if distance else ""
         result_text = f"，{location_result}" if location_result else ""
         campus_text = f"，{campus_name}" if campus_name else ""
-        outside_text = "，可能不在校園" if outside == "是" else ""
+        outside_text = ""
+        if outside == "是" and "可能不在校園" not in location_result:
+            outside_text = "，可能不在校園 Possibly off campus"
         st.markdown(
-            f"{row.get('student_name', '')}　{lat}, {lng}{accuracy_text}{distance_text}{result_text}{campus_text}{outside_text}　[地圖]({link})"
+            f"{row.get('student_name', '')}　{lat}, {lng}{accuracy_text}{distance_text}{result_text}{campus_text}{outside_text}　[地圖 Map]({link})"
         )
 
 
@@ -1608,8 +1698,8 @@ def _consume_browser_gps() -> None:
 
 
 def render_teacher() -> None:
-    st.title("開始課堂")
-    if st.button("返回主頁"):
+    st.title("開始課堂 Start class")
+    if st.button("返回主頁 Home"):
         st.session_state.page = "landing"
         st.rerun()
 
@@ -1628,9 +1718,9 @@ def render_teacher() -> None:
 
     roster = load_roster()
     if roster.empty:
-        st.warning("尚未上傳名冊，學生將無法完成點名。")
+        st.warning("尚未上傳名冊，學生將無法完成點名。 No roster has been uploaded, so students cannot check in.")
     else:
-        st.caption(f"名冊 {len(roster)} 人，讀自 data/roster.csv。")
+        st.caption(f"名冊 {len(roster)} 人，讀自 data/roster.csv。 Roster of {len(roster)}, read from data/roster.csv.")
 
     session = load_session() or {}
     default_date = date.today()
@@ -1646,36 +1736,36 @@ def render_teacher() -> None:
         default_end = suggested_end
 
     with st.form("lesson"):
-        class_date = st.date_input("課堂日期 *", value=default_date)
+        class_date = st.date_input("課堂日期 * Class date *", value=default_date)
         start_col, end_col = st.columns(2)
         with start_col:
-            start_time = st.time_input("上課時間 *", value=default_start, step=60)
+            start_time = st.time_input("上課時間 * Start time *", value=default_start, step=60)
         with end_col:
-            end_time = st.time_input("下課時間 *", value=default_end, step=60)
-        remarks = st.text_area("備註", value=session.get("remarks", ""))
+            end_time = st.time_input("下課時間 * End time *", value=default_end, step=60)
+        remarks = st.text_area("備註 Remarks", value=session.get("remarks", ""))
         saved_campus = str(session.get("campus_choice") or session.get("campus_name") or "").strip()
         if saved_campus == CAMPUS_OTHERS_NAME:
             saved_campus = CAMPUS_OTHERS
         campus_index = CAMPUS_OPTIONS.index(saved_campus) if saved_campus in CAMPUS_OPTIONS else 0
-        campus_label = st.radio("上課地點", CAMPUS_OPTIONS, index=campus_index)
-        start_clicked = st.form_submit_button("開始", type="primary")
+        campus_label = st.radio("上課地點 Class location", CAMPUS_OPTIONS, index=campus_index, format_func=bilingual_campus)
+        start_clicked = st.form_submit_button("開始 Start", type="primary")
 
     if start_clicked:
         if end_time <= start_time:
-            st.error("下課時間必須晚於上課時間。")
+            st.error("下課時間必須晚於上課時間。 The end time must be later than the start time.")
         elif campus_label == CAMPUS_OTHERS and load_other_gps() is None:
             st.error(OTHER_GPS_REQUIRED)
         else:
             start_lesson(class_date, start_time, end_time, remarks, campus_label)
-            st.session_state.flash = "已開始課堂。已有的點名紀錄會保留。"
+            st.session_state.flash = "已開始課堂。已有的點名紀錄會保留。 The class has started. Existing attendance records are kept."
             st.rerun()
 
     saved = load_session()
     if not saved:
-        st.info("按「開始」後會顯示學生用的 QR code。")
+        st.info("按「開始」後會顯示學生用的 QR code。 Press Start to show the QR code for students.")
         return
 
-    st.subheader("學生點名 QR")
+    st.subheader("學生點名 QR Student check-in QR")
     form_start = format_hhmm(start_time)
     form_end = format_hhmm(end_time)
     if (
@@ -1683,27 +1773,27 @@ def render_teacher() -> None:
         or form_start != saved["start_time"]
         or form_end != saved["end_time"]
     ):
-        st.warning("上面的時間已改，按「開始」後 QR 才會更新。")
+        st.warning("上面的時間已改，按「開始」後 QR 才會更新。 The times above have changed. The QR code updates after you press Start.")
     render_live_qr(saved["class_date"], saved["start_time"], saved["end_time"])
     if saved.get("campus_name"):
-        st.caption(f"本節地點：{saved['campus_name']}")
-    st.caption("上課時間或之前是準時出席，15 分鐘內是遲到，超過 15 分鐘是缺席。點名要開啟一次定位，不需拍照。")
+        st.caption(f"本節地點 This class location：{bilingual_campus(str(saved.get('campus_name', '')))}")
+    st.caption("上課時間或之前是準時出席，15 分鐘內是遲到，超過 15 分鐘是缺席。點名要開啟一次定位，不需拍照。 At or before the start time is on time. Within 15 minutes is late. After 15 minutes is absent. Check-in needs one location reading and no photo.")
     if saved.get("remarks"):
-        st.caption(f"備註：{saved['remarks']}")
+        st.caption(f"備註 Remarks：{saved['remarks']}")
 
-    st.subheader("出席")
+    st.subheader("出席 Attendance")
     render_attendance_board()
-    st.button("重新整理出席")
+    st.button("重新整理出席 Refresh attendance")
 
-    st.subheader("結束課堂")
+    st.subheader("結束課堂 End class")
     if saved.get("report_sent"):
         sent_at = saved.get("report_sent_at") or ""
-        st.success(f"報告已於 {sent_at} 發送，不會再寄一次。")
+        st.success(f"報告已於 {sent_at} 發送，不會再寄一次。 The report was sent at {sent_at} and will not be sent again.")
         return
     if end_prompt_needed(saved):
-        st.warning("已過下課時間，請按「結束課堂並發送報告」寄出出席報告。")
-    if st.button("結束課堂並發送報告"):
-        with st.spinner("正在發送報告…"):
+        st.warning("已過下課時間，請按「結束課堂並發送報告」寄出出席報告。 The class end time has passed. Press End class and send report to email the attendance report.")
+    if st.button("結束課堂並發送報告 End class and send report"):
+        with st.spinner("正在發送報告… Sending the report…"):
             result = finish_class()
         if result.get("email_sent"):
             st.session_state.flash_level = "success"
@@ -1719,12 +1809,12 @@ def render_checkin_result(result: dict) -> None:
         st.error(result.get("message") or INVALID_INPUT)
         return
     if result.get("status"):
-        st.write(f"出席狀態：{result['status']}")
+        st.write(f"出席狀態 Attendance：{bilingual_status(result['status'])}")
     row = result.get("row") or {}
     if row.get("checkin_time"):
-        st.caption(f"點名時間：{row['checkin_time']}")
+        st.caption(f"點名時間 Check-in time：{row['checkin_time']}")
     if str(row.get("可能不在校園", "")).strip() == "是":
-        st.warning("可能不在校園")
+        st.warning("可能不在校園 Possibly off campus")
     if "email_sent" not in result:
         return
     if result.get("email_sent"):
@@ -1740,13 +1830,13 @@ def render_checkin_result(result: dict) -> None:
 def render_live_qr(class_date: str, start: str, end: str) -> None:
     origin = student_origin()
     if not origin.startswith("https://"):
-        st.error("學生 QR 需要 HTTPS 網址。iPhone 在 http 區網不會提供定位。")
+        st.error("學生 QR 需要 HTTPS 網址。iPhone 在 http 區網不會提供定位。 The student QR code needs an HTTPS URL. An iPhone will not share location on an http LAN address.")
         return
     ticket = current_qr_token(class_date, start, end)
     url = build_student_url(origin, class_date, start, end, ticket["token"])
     st.image(make_qr_image(url))
     st.code(url, language=None)
-    st.caption(f"學生網址：{origin}")
+    st.caption(f"學生網址 Student URL：{origin}")
 
 
 def _accept_student_entry(event: str, token: str, formatted_start: str, formatted_end: str) -> str:
@@ -1780,7 +1870,7 @@ def _accept_student_entry(event: str, token: str, formatted_start: str, formatte
 
 def _show_locate_button(event: str, start: str, end: str, token: str, grant: str) -> None:
     href = html.escape(locate_page_url(event, start, end, token, grant), quote=True)
-    st.markdown(f'<a class="locate-launch" href="{href}">允許定位</a>', unsafe_allow_html=True)
+    st.markdown(f'<a class="locate-launch" href="{href}">允許定位 Allow location</a>', unsafe_allow_html=True)
 
 
 def _dismiss_location_dialog() -> None:
@@ -1788,13 +1878,13 @@ def _dismiss_location_dialog() -> None:
         st.session_state.location_choice = "cancel"
 
 
-@st.dialog("現在開啟定位功能？", width="large", on_dismiss=_dismiss_location_dialog)
+@st.dialog("現在開啟定位功能？ Turn on location now?", width="large", on_dismiss=_dismiss_location_dialog)
 def _location_dialog() -> None:
-    st.write("開啟後才會讀取一次定位。取消則停留在此頁，不會記錄出席。")
-    if st.button("開啟", type="primary", key="location-open"):
+    st.write("開啟後才會讀取一次定位。取消則停留在此頁，不會記錄出席。 Location is read once after you turn it on. Cancel stays on this page and does not record attendance.")
+    if st.button("開啟 Turn on", type="primary", key="location-open"):
         st.session_state.location_choice = "open"
         st.rerun()
-    if st.button("取消", key="location-cancel"):
+    if st.button("取消 Cancel", key="location-cancel"):
         st.session_state.location_choice = "cancel"
         st.rerun()
 
@@ -1808,15 +1898,15 @@ def _ask_before_location(event: str, start: str, end: str, token: str, grant: st
     if choice != "cancel":
         _location_dialog()
         return False
-    st.info("未開啟定位，出席尚未記錄。")
-    if st.button("再開啟定位", type="primary"):
+    st.info("未開啟定位，出席尚未記錄。 Location was not turned on, so attendance was not recorded.")
+    if st.button("再開啟定位 Turn location on again", type="primary"):
         st.session_state.location_choice = None
         st.rerun()
     return False
 
 
 def render_student(event: str, start: str, end: str, token: str) -> None:
-    st.title("課堂點名")
+    st.title("課堂點名 Class roll call")
     class_date = parse_date(event)
     start_t = parse_hhmm(start)
     end_t = parse_hhmm(end)
@@ -1831,7 +1921,7 @@ def render_student(event: str, start: str, end: str, token: str) -> None:
         return
     session = load_session()
     if not session_matches(session, event, formatted_start, formatted_end):
-        st.error("此課堂尚未開始，或連結與目前課堂不符。")
+        st.error("此課堂尚未開始，或連結與目前課堂不符。 This class has not started, or the link does not match the current class.")
         return
 
     st.caption(f"{class_date.isoformat()}　{formatted_start}–{formatted_end}")
@@ -1846,9 +1936,9 @@ def render_student(event: str, start: str, end: str, token: str) -> None:
         if st.session_state.get("identity_error"):
             st.error(st.session_state.identity_error)
         with st.form("identity"):
-            email = st.text_input("學生電郵")
-            number = st.text_input("學生編號")
-            submitted = st.form_submit_button("確認")
+            email = st.text_input("學生電郵 Student email")
+            number = st.text_input("學生編號 Student number")
+            submitted = st.form_submit_button("確認 Confirm")
         if submitted:
             identity = validate_identity(email, number)
             if not identity["ok"]:
@@ -1888,8 +1978,8 @@ def render_student(event: str, start: str, end: str, token: str) -> None:
     latitude = float(fix["latitude"])
     longitude = float(fix["longitude"])
     accuracy = float(fix["accuracy"])
-    st.caption(f"已取得定位：{format_coord(latitude)}, {format_coord(longitude)}")
-    if st.button("完成點名", type="primary"):
+    st.caption(f"已取得定位 Location received：{format_coord(latitude)}, {format_coord(longitude)}")
+    if st.button("完成點名 Finish check-in", type="primary"):
         result = record_checkin(
             student["student_email"],
             student["student_number"],
@@ -1906,7 +1996,7 @@ def render_student(event: str, start: str, end: str, token: str) -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="課堂點名系統", page_icon="📋", layout="centered")
+    st.set_page_config(page_title="課堂點名系統 Lesson roll call", page_icon="📋", layout="centered")
     inject_css()
     ensure_data_dir()
     if "page" not in st.session_state:
