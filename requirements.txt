@@ -1,0 +1,6 @@
+streamlit==1.64.0
+pandas
+openpyxl
+qrcode
+Pillow
+python-dotenv

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>允許定位</title>
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #f4f1ea;
+      color: #1a2332;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      box-sizing: border-box;
+      max-width: 32rem;
+      margin: 0 auto;
+      padding: max(1.4rem, env(safe-area-inset-top)) 1.25rem max(1.5rem, env(safe-area-inset-bottom));
+    }
+    h1 {
+      margin: 0 0 0.4rem;
+      font-size: 1.7rem;
+      font-weight: 700;
+    }
+    p {
+      margin: 0 0 1rem;
+      line-height: 1.45;
+    }
+    button {
+      appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 4.75rem;
+      margin-top: 0.4rem;
+      border: 0;
+      border-radius: 14px;
+      background: #1f6b4a;
+      color: #fffdf8;
+      font: inherit;
+      font-size: 1.5rem;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    button:disabled {
+      opacity: 0.7;
+    }
+    #status {
+      min-height: 3.2rem;
+      font-size: 1.05rem;
+    }
+    #status.error {
+      color: #8a2b2b;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>課堂點名</h1>
+    <p id="when"></p>
+    <p id="status"></p>
+    <button type="button" id="allow">允許定位</button>
+  </main>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const when = document.getElementById("when");
+    const status = document.getElementById("status");
+    const button = document.getElementById("allow");
+    const eventDate = params.get("event") || "";
+    const start = params.get("start") || "";
+    const end = params.get("end") || "";
+    if (eventDate && start && end) {
+      when.textContent = eventDate + "　" + start + "–" + end;
+    }
+
+    function checkinPath(extra) {
+      const next = new URLSearchParams();
+      for (const key of ["event", "start", "end", "token", "grant"]) {
+        const value = params.get(key);
+        if (!value) {
+          return "";
+        }
+        next.set(key, value);
+      }
+      Object.keys(extra).forEach((key) => {
+        next.set(key, String(extra[key]));
+      });
+      return "/?" + next.toString();
+    }
+
+    function showError(message) {
+      status.textContent = message;
+      status.className = "error";
+      button.disabled = false;
+    }
+
+    button.addEventListener("click", () => {
+      if (!params.get("token") || !params.get("grant")) {
+        showError("此二維碼已失效，請重新掃描老師畫面上的二維碼");
+        return;
+      }
+      if (!navigator.geolocation) {
+        showError("請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。");
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const path = checkinPath({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy
+          });
+          if (!path) {
+            showError("此二維碼已失效，請重新掃描老師畫面上的二維碼");
+            return;
+          }
+          window.location.replace(path);
+        },
+        (err) => {
+          if (err && err.code === 1) {
+            showError("請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。");
+            return;
+          }
+          showError("未能取得定位，請再按一次「允許定位」。");
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+      );
+      button.disabled = true;
+      status.className = "";
+      status.textContent = "正在讀取定位…";
+    });
+  </script>
+</body>
+</html>

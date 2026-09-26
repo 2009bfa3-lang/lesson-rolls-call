@@ -1,0 +1,16 @@
+{
+  "teacher_email": "bennychan@hkapa.edu",
+  "public_base_url": "https://late-geographic-traditional-infectious.trycloudflare.com",
+  "campuses": [
+    {
+      "name": "Bethanie campus",
+      "latitude": 22.26229126734515,
+      "longitude": 114.13573632952154
+    },
+    {
+      "name": "Wan Chai HKAPA campus",
+      "latitude": 22.280207758952102,
+      "longitude": 114.17013747580481
+    }
+  ]
+}

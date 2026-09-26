@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>填入目前定位</title>
+  <style>
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: #f4f1ea;
+      color: #1a2332;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      box-sizing: border-box;
+      max-width: 32rem;
+      margin: 0 auto;
+      padding: max(1.4rem, env(safe-area-inset-top)) 1.25rem max(1.5rem, env(safe-area-inset-bottom));
+    }
+    h1 {
+      margin: 0 0 0.6rem;
+      font-size: 1.6rem;
+    }
+    p {
+      min-height: 3rem;
+      line-height: 1.45;
+    }
+    button {
+      appearance: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      min-height: 4.25rem;
+      border: 0;
+      border-radius: 14px;
+      background: #1f6b4a;
+      color: #fffdf8;
+      font: inherit;
+      font-size: 1.35rem;
+      font-weight: 700;
+      cursor: pointer;
+      touch-action: manipulation;
+    }
+    #status.error { color: #8a2b2b; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>課堂點名</h1>
+    <p id="status">按下面的按鈕，把這部電腦的定位填入 current GPS。</p>
+    <button type="button" id="fill">填入目前定位</button>
+  </main>
+  <script>
+    const status = document.getElementById("status");
+    const button = document.getElementById("fill");
+
+    function showError(message) {
+      status.textContent = message;
+      status.className = "error";
+      button.disabled = false;
+    }
+
+    function trimCoord(value) {
+      return String(Number(value.toFixed(6)));
+    }
+
+    button.addEventListener("click", () => {
+      if (!navigator.geolocation) {
+        showError("這個瀏覽器不能讀取定位，請直接輸入緯度和經度。");
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const lat = trimCoord(pos.coords.latitude);
+          const lng = trimCoord(pos.coords.longitude);
+          window.location.replace("/?current_lat=" + encodeURIComponent(lat) + "&current_lng=" + encodeURIComponent(lng));
+        },
+        () => {
+          showError("未能取得定位，請允許這個瀏覽器使用定位，或直接輸入座標。");
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+      );
+      button.disabled = true;
+      status.className = "";
+      status.textContent = "正在讀取定位…";
+    });
+  </script>
+</body>
+</html>
