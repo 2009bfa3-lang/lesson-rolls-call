@@ -1868,7 +1868,7 @@ def render_landing() -> None:
             f"進行中的課堂 Current class：{session['class_date']} {session['start_time']}–{session['end_time']}"
         )
     if st.button("開始使用 Start", type="primary"):
-        st.session_state.editing_lesson = False
+        st.session_state.show_qr = False
         st.session_state.page = "teacher"
         st.rerun()
     if st.button("設定 Settings"):
@@ -2078,7 +2078,7 @@ def _consume_browser_gps() -> None:
 
 def _teacher_home_button() -> None:
     if st.button("返回主頁 Home"):
-        st.session_state.editing_lesson = False
+        st.session_state.show_qr = False
         st.session_state.page = "landing"
         st.rerun()
 
@@ -2146,7 +2146,7 @@ def _render_lesson_form(session: dict) -> None:
             st.error(OTHER_GPS_REQUIRED)
         else:
             start_lesson(class_date, start_time, end_time, remarks, campus_label)
-            st.session_state.editing_lesson = False
+            st.session_state.show_qr = True
             st.session_state.flash = "已開始課堂。已有的點名紀錄會保留。 The class has started. Existing attendance records are kept."
             st.rerun()
         return
@@ -2193,7 +2193,7 @@ def _render_qr_screen(saved: dict) -> None:
             st.rerun()
 
     if st.button("更改課堂 Change class"):
-        st.session_state.editing_lesson = True
+        st.session_state.show_qr = False
         st.rerun()
 
 
@@ -2202,7 +2202,7 @@ def render_teacher() -> None:
         render_teacher_gate()
         return
     saved = load_session()
-    if saved and not st.session_state.get("editing_lesson"):
+    if saved and st.session_state.get("show_qr"):
         _render_qr_screen(saved)
         return
     _render_lesson_form(saved or {})
