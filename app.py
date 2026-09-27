@@ -1485,6 +1485,49 @@ def make_qr_image(url: str) -> Image.Image:
     return code.make_image(fill_color="#1a2332", back_color="white").convert("RGB")
 
 
+def split_bi(text: str) -> tuple[str, str] | None:
+    """Split a jammed bilingual sentence into Chinese, then the English that follows."""
+    for index, char in enumerate(text):
+        if not ("A" <= char <= "Z"):
+            continue
+        if index > 0 and not text[index - 1].isspace() and text[index - 1] not in "。！？":
+            continue
+        english = text[index:].strip()
+        if any("\u4e00" <= item <= "\u9fff" for item in english):
+            continue
+        chinese = text[:index].strip()
+        if chinese and english:
+            return chinese, english
+    return None
+
+
+def show_bi(chinese: str, english: str, kind: str = "") -> None:
+    """Chinese on the main line. English underneath, smaller and quieter."""
+    klass = f"bi {kind}".strip()
+    st.markdown(
+        f"<div class='{klass}'><p class='zh'>{html.escape(chinese)}</p>"
+        f"<p class='en'>{html.escape(english)}</p></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def show_msg(text: str, kind: str = "") -> None:
+    parts = split_bi(str(text or ""))
+    if parts is None:
+        if kind == "error":
+            st.error(text)
+        elif kind == "success":
+            st.success(text)
+        elif kind == "warning":
+            st.warning(text)
+        elif kind == "info":
+            st.info(text)
+        else:
+            st.write(text)
+        return
+    show_bi(parts[0], parts[1], kind)
+
+
 def inject_css() -> None:
     st.markdown(
         """
@@ -1499,12 +1542,50 @@ def inject_css() -> None:
             background: #f4f1ea;
             color: #1a2332;
         }
+        [data-testid="stVerticalBlock"] {
+            gap: 0.65rem;
+        }
+        .bi {
+            margin: 0.05rem 0 0.15rem;
+        }
+        .bi .zh {
+            margin: 0;
+            font-size: 1.05rem;
+            line-height: 1.45;
+        }
+        .bi .en {
+            margin: 0.18rem 0 0;
+            font-size: 0.84rem;
+            line-height: 1.4;
+        }
+        .bi.note .zh {
+            font-size: 0.95rem;
+        }
+        .bi.err, .bi.ok, .bi.warn, .bi.info {
+            padding: 0.75rem 0.95rem;
+            border-radius: 12px;
+        }
+        .bi.err { background: #fdecec; }
+        .bi.ok { background: #e8f4ee; }
+        .bi.warn { background: #fff4e5; }
+        .bi.info { background: #eef2f6; }
+        [data-testid="stMarkdownContainer"] .bi .zh,
+        [data-testid="stMarkdownContainer"] .bi .zh * {
+            color: #1a2332 !important;
+            -webkit-text-fill-color: #1a2332 !important;
+        }
+        [data-testid="stMarkdownContainer"] .bi .en,
+        [data-testid="stMarkdownContainer"] .bi .en * {
+            color: #4a5568 !important;
+            -webkit-text-fill-color: #4a5568 !important;
+            font-size: 0.84rem !important;
+        }
         [data-testid="stSidebar"],
         [data-testid="stSidebarCollapsedControl"] { display: none; }
         [data-testid="stMainBlockContainer"],
         .block-container {
-            max-width: 760px;
-            padding-top: 1.4rem;
+            max-width: 40rem;
+            padding-top: 1.15rem;
             padding-left: 1.5rem !important;
             padding-right: 1.5rem !important;
             box-sizing: border-box;
@@ -1743,7 +1824,7 @@ def student_query() -> tuple[str, str, str, str] | None:
 
 def render_teacher_gate() -> None:
     """Public page. The only sentence is the scan line. Start, Settings, roster, and the report stay hidden."""
-    st.write("請掃描老師畫面上的二維碼 Scan the QR code on the teacher’s screen.")
+    show_bi("請掃描老師畫面上的二維碼", "Scan the QR code on the teacher’s screen.")
     if not teacher_code_is_set():
         with st.form("set-teacher-code"):
             code = st.text_input("設定教師密碼 Set teacher code", type="password")
@@ -1751,7 +1832,7 @@ def render_teacher_gate() -> None:
                 if save_teacher_code(code):
                     st.rerun()
                 else:
-                    st.error("請輸入密碼。 Enter a code.")
+                    show_msg("請輸入密碼。 Enter a code.", "error")
         return
     with st.form("teacher-entry"):
         code = st.text_input("教師進入 Teacher entry", type="password")
@@ -1760,7 +1841,7 @@ def render_teacher_gate() -> None:
                 st.session_state.teacher_unlocked = True
                 st.rerun()
             else:
-                st.error("密碼不正確 The code is incorrect.")
+                show_msg("密碼不正確 The code is incorrect.", "error")
 
 
 def render_landing() -> None:
@@ -1768,21 +1849,26 @@ def render_landing() -> None:
         render_teacher_gate()
         return
     st.title("課堂點名系統 Lesson roll call")
-    st.write(
-        "老師開一節課，學生用手機掃 QR，核對學籍並開啟一次定位。 The teacher starts a lesson. Students scan the QR code, confirm their record, and share location once. "
-        "名冊、課堂和出席都寫在這部電腦的 data 資料夾，所以另一部手機開啟連結也會讀到同一班。 The roster, the lesson, and attendance are stored in the data folder on this computer, so another phone that opens the link sees the same class."
+    show_bi(
+        "老師開一節課，學生用手機掃 QR，核對學籍並開啟一次定位。",
+        "The teacher starts a lesson. Students scan the QR code, confirm their record, and share location once.",
+    )
+    show_bi(
+        "名冊、課堂和出席都寫在這部電腦的 data 資料夾，所以另一部手機開啟連結也會讀到同一班。",
+        "The roster, the lesson, and attendance are stored in the data folder on this computer, so another phone that opens the link sees the same class.",
     )
     roster = load_roster()
     session = load_session()
     if roster.empty:
-        st.info("尚未上傳名冊。請先到「設定」。 No roster yet. Go to Settings first.")
+        show_msg("尚未上傳名冊。請先到「設定」。 No roster yet. Go to Settings first.", "info")
     else:
-        st.caption(f"名冊已有 {len(roster)} 人。 The roster has {len(roster)} students.")
+        show_msg(f"名冊已有 {len(roster)} 人。 The roster has {len(roster)} students.", "note")
     if session:
         st.caption(
             f"進行中的課堂 Current class：{session['class_date']} {session['start_time']}–{session['end_time']}"
         )
     if st.button("開始使用 Start", type="primary"):
+        st.session_state.editing_lesson = False
         st.session_state.page = "teacher"
         st.rerun()
     if st.button("設定 Settings"):
@@ -1795,7 +1881,7 @@ def render_settings() -> None:
         render_teacher_gate()
         return
     st.title("設定 Settings")
-    st.caption("名冊存在 data/roster.csv，老師電郵和公開網址存在 data/settings.json。 The roster is in data/roster.csv. The teacher email and public URL are in data/settings.json.")
+    show_msg("名冊存在 data/roster.csv，老師電郵和公開網址存在 data/settings.json。 The roster is in data/roster.csv. The teacher email and public URL are in data/settings.json.", "note")
     if st.button("返回主頁 Home"):
         st.session_state.page = "landing"
         st.rerun()
@@ -1809,24 +1895,28 @@ def render_settings() -> None:
         file_name="roster_template.csv",
         mime="text/csv",
     )
-    st.caption("欄位可以是 Student name、Student Email、Student Number，或 student_name、student_email、student_number，也接受姓名、電郵、學號。 Columns may be Student name, Student Email, Student Number, or student_name, student_email, student_number. 姓名, 電郵, and 學號 are also accepted.")
+    show_bi(
+        "欄位可以是 Student name、Student Email、Student Number，或 student_name、student_email、student_number，也接受姓名、電郵、學號。",
+        "Columns may be Student name, Student Email, Student Number, or student_name, student_email, student_number. 姓名, 電郵, and 學號 are also accepted.",
+        "note",
+    )
 
     upload = st.file_uploader("上傳名冊 CSV Upload roster CSV", type=["csv"])
     if st.button("儲存名冊 Save roster"):
         if upload is None:
-            st.error("請先選擇 CSV 檔。 Choose a CSV file first.")
+            show_msg("請先選擇 CSV 檔。 Choose a CSV file first.", "error")
         else:
             try:
                 frame = read_roster_upload(upload.getvalue())
                 count = save_roster(frame)
             except Exception as exc:
-                st.error(f"讀取 CSV 失敗：{exc} Could not read the CSV: {exc}")
+                show_msg(f"讀取 CSV 失敗：{exc} Could not read the CSV: {exc}", "error")
             else:
-                st.success(f"已儲存 {count} 位學生到 data/roster.csv。 Saved {count} students to data/roster.csv.")
+                show_msg(f"已儲存 {count} 位學生到 data/roster.csv。 Saved {count} students to data/roster.csv.", "success")
 
     roster = load_roster()
     if roster.empty:
-        st.info("尚未有名冊。 There is no roster yet.")
+        show_msg("尚未有名冊。 There is no roster yet.", "info")
     else:
         st.dataframe(roster, width="stretch", hide_index=True)
 
@@ -1844,18 +1934,18 @@ def render_settings() -> None:
         key="teacher_email_input",
         help="可填多個電郵，以逗號分隔。 Several addresses are allowed, separated by commas.",
     )
-    st.caption("可填多個電郵，以逗號分隔。 Several addresses are allowed, separated by commas.")
+    show_msg("可填多個電郵，以逗號分隔。 Several addresses are allowed, separated by commas.", "note")
     cloud_origin = streamlit_cloud_origin()
     if cloud_origin:
         st.caption(f"學生網址 Student URL：{cloud_origin}")
-        st.caption("學生手機請用已開啟的 HTTPS 頁面。 Student phones must use the HTTPS page they already opened.")
+        show_msg("學生手機請用已開啟的 HTTPS 頁面。 Student phones must use the HTTPS page they already opened.", "note")
     else:
         st.text_input(
             "公開網址 Public URL",
             key="public_base_url_input",
             help="學生手機用來開啟 QR 的網址。不要填 localhost。 The URL students open from the QR code. Do not use localhost.",
         )
-        st.caption("學生 QR 使用 HTTPS 網址（data/https_origin.txt）。iPhone 在下面這個 http 區網網址不會提供定位。 The student QR code uses the HTTPS URL in data/https_origin.txt. An iPhone will not share location on the http LAN URL below.")
+        show_msg("學生 QR 使用 HTTPS 網址（data/https_origin.txt）。iPhone 在下面這個 http 區網網址不會提供定位。 The student QR code uses the HTTPS URL in data/https_origin.txt. An iPhone will not share location on the http LAN URL below.", "note")
         st.code(lan_base_url(), language=None)
         https_origin = load_https_origin()
         if https_origin:
@@ -1879,25 +1969,25 @@ def render_settings() -> None:
         public_base = cloud_origin or st.session_state.public_base_url_input.strip()
         other_gps = str(st.session_state.get("other_gps_input", "")).strip()
         if any(not teacher_email_ok(item) for item in teacher_emails):
-            st.error("老師電郵格式不正確。請用逗號分隔每個地址。 The teacher email format is not valid. Separate each address with a comma.")
+            show_msg("老師電郵格式不正確。請用逗號分隔每個地址。 The teacher email format is not valid. Separate each address with a comma.", "error")
         elif other_gps and parse_gps_pair(other_gps) is None:
-            st.error("其他地點 GPS 必須是緯度, 經度兩個數字。 Other location GPS must be two numbers: latitude, longitude.")
+            show_msg("其他地點 GPS 必須是緯度, 經度兩個數字。 Other location GPS must be two numbers: latitude, longitude.", "error")
         else:
             save_settings(teacher_email, public_base)
             save_other_gps(other_gps)
             if public_base and ("localhost" in public_base or "127.0.0.1" in public_base):
-                st.warning("已儲存，但這個公開網址是 localhost，手機打不開。請改用上面的區網網址。 Saved, but this public URL is localhost, so a phone cannot open it. Use the LAN URL above.")
+                show_msg("已儲存，但這個公開網址是 localhost，手機打不開。請改用上面的區網網址。 Saved, but this public URL is localhost, so a phone cannot open it. Use the LAN URL above.", "warning")
             else:
-                st.success("已儲存老師電郵和公開網址。 Saved the teacher email and public URL.")
+                show_msg("已儲存老師電郵和公開網址。 Saved the teacher email and public URL.", "success")
 
     st.divider()
     with st.form("change-teacher-code"):
         new_code = st.text_input("更改教師密碼 Change teacher code", type="password")
         if st.form_submit_button("儲存新密碼 Save new code", type="primary"):
             if save_teacher_code(new_code):
-                st.success("已更新教師密碼。 The teacher code was updated.")
+                show_msg("已更新教師密碼。 The teacher code was updated.", "success")
             else:
-                st.error("請輸入密碼。 Enter a code.")
+                show_msg("請輸入密碼。 Enter a code.", "error")
 
 
 def render_attendance_board() -> None:
@@ -1986,15 +2076,14 @@ def _consume_browser_gps() -> None:
     st.rerun()
 
 
-def render_teacher() -> None:
-    if not st.session_state.get("teacher_unlocked"):
-        render_teacher_gate()
-        return
-    st.title("開始課堂 Start class")
+def _teacher_home_button() -> None:
     if st.button("返回主頁 Home"):
+        st.session_state.editing_lesson = False
         st.session_state.page = "landing"
         st.rerun()
 
+
+def _teacher_flashes() -> None:
     flash = st.session_state.pop("flash", "")
     if flash:
         st.success(flash)
@@ -2008,13 +2097,21 @@ def render_teacher() -> None:
         else:
             st.success(flash_text)
 
+
+def _roster_note() -> None:
     roster = load_roster()
     if roster.empty:
         st.warning("尚未上傳名冊，學生將無法完成點名。 No roster has been uploaded, so students cannot check in.")
     else:
         st.caption(f"名冊 {len(roster)} 人，讀自 data/roster.csv。 Roster of {len(roster)}, read from data/roster.csv.")
 
-    session = load_session() or {}
+
+def _render_lesson_form(session: dict) -> None:
+    st.title("開始課堂 Start class")
+    _teacher_home_button()
+    _teacher_flashes()
+    _roster_note()
+
     default_date = hong_kong_now().date()
     parsed_date = parse_date(session.get("class_date", "")) if session else None
     if parsed_date is not None:
@@ -2049,26 +2146,26 @@ def render_teacher() -> None:
             st.error(OTHER_GPS_REQUIRED)
         else:
             start_lesson(class_date, start_time, end_time, remarks, campus_label)
+            st.session_state.editing_lesson = False
             st.session_state.flash = "已開始課堂。已有的點名紀錄會保留。 The class has started. Existing attendance records are kept."
             st.rerun()
-
-    saved = load_session()
-    if not saved:
-        st.info("按「開始」後會顯示學生用的 QR code。 Press Start to show the QR code for students.")
         return
 
-    st.subheader("學生點名 QR Student check-in QR")
-    form_start = format_hhmm(start_time)
-    form_end = format_hhmm(end_time)
-    if (
-        class_date.strftime("%Y-%m-%d") != saved["class_date"]
-        or form_start != saved["start_time"]
-        or form_end != saved["end_time"]
-    ):
-        st.warning("上面的時間已改，按「開始」後 QR 才會更新。 The times above have changed. The QR code updates after you press Start.")
-    render_live_qr(saved["class_date"], saved["start_time"], saved["end_time"])
-    if saved.get("campus_name"):
-        st.caption(f"本節地點 This class location：{bilingual_campus(str(saved.get('campus_name', '')))}")
+    st.info("按「開始」後會顯示學生用的 QR code。 Press Start to show the QR code for students.")
+
+
+def _render_qr_screen(saved: dict) -> None:
+    """Running class. The setup form stays off this screen; students scan the QR."""
+    st.title("學生點名 QR Student check-in QR")
+    _teacher_home_button()
+    _teacher_flashes()
+    _roster_note()
+
+    campus = bilingual_campus(str(saved.get("campus_name") or "").strip())
+    st.caption(f"課堂日期 Class date：{saved.get('class_date', '')}")
+    st.caption(f"上課時間 Class time：{saved.get('start_time', '')}–{saved.get('end_time', '')}")
+    st.caption(f"校園 Campus：{campus or '—'}")
+    render_live_qr(str(saved.get("class_date", "")), str(saved.get("start_time", "")), str(saved.get("end_time", "")))
     st.caption("上課時間或之前是準時出席，15 分鐘內是遲到，超過 15 分鐘是缺席。點名要開啟一次定位，不需拍照。 At or before the start time is on time. Within 15 minutes is late. After 15 minutes is absent. Check-in needs one location reading and no photo.")
     if saved.get("remarks"):
         st.caption(f"備註 Remarks：{saved['remarks']}")
@@ -2081,19 +2178,34 @@ def render_teacher() -> None:
     if saved.get("report_sent"):
         sent_at = saved.get("report_sent_at") or ""
         st.success(f"報告已於 {sent_at} 發送，不會再寄一次。 The report was sent at {sent_at} and will not be sent again.")
-        return
-    if end_prompt_needed(saved):
-        st.warning("已過下課時間，請按「結束課堂並發送報告」寄出出席報告。 The class end time has passed. Press End class and send report to email the attendance report.")
-    if st.button("結束課堂並發送報告 End class and send report"):
-        with st.spinner("正在發送報告… Sending the report…"):
-            result = finish_class()
-        if result.get("email_sent"):
-            st.session_state.flash_level = "success"
-            st.session_state.flash_text = result["message"]
-        else:
-            st.session_state.flash_level = "warning"
-            st.session_state.flash_text = result["message"]
+    else:
+        if end_prompt_needed(saved):
+            st.warning("已過下課時間，請按「結束課堂並發送報告」寄出出席報告。 The class end time has passed. Press End class and send report to email the attendance report.")
+        if st.button("結束課堂並發送報告 End class and send report"):
+            with st.spinner("正在發送報告… Sending the report…"):
+                result = finish_class()
+            if result.get("email_sent"):
+                st.session_state.flash_level = "success"
+                st.session_state.flash_text = result["message"]
+            else:
+                st.session_state.flash_level = "warning"
+                st.session_state.flash_text = result["message"]
+            st.rerun()
+
+    if st.button("更改課堂 Change class"):
+        st.session_state.editing_lesson = True
         st.rerun()
+
+
+def render_teacher() -> None:
+    if not st.session_state.get("teacher_unlocked"):
+        render_teacher_gate()
+        return
+    saved = load_session()
+    if saved and not st.session_state.get("editing_lesson"):
+        _render_qr_screen(saved)
+        return
+    _render_lesson_form(saved or {})
 
 
 def render_checkin_result(result: dict) -> None:
