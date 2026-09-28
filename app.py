@@ -77,7 +77,9 @@ TEACHER_EMAIL_SKIPPED = "報告未發送：尚未設定 SMTP。 The report was n
 QR_INVALID = "此二維碼已失效，請重新掃描老師畫面上的二維碼。 This QR code has expired. Scan the code on the teacher's screen again."
 GPS_REQUIRED = "請開啟定位功能後再點名。 Turn on location, then check in."
 GPS_DENIED = "請按網址列左邊的圖示，開啟網站設定，將位置設為允許，再按一次「允許定位」。也可以到 設定 → Safari → 位置 → 允許。 Tap the icon on the left of the address bar, open the site settings, set Location to Allow, then tap Allow location again. You can also go to Settings → Safari → Location → Allow."
-QR_TTL = timedelta(seconds=30)
+QR_TTL = timedelta(seconds=60)
+ON_TIME_BUFFER = timedelta(minutes=5)
+LATE_LIMIT = timedelta(minutes=15)
 LOCATION_RADIUS_M = 200
 LOCATION_UNSET = "未設定課堂位置"
 LOCATION_MATCH = "位置相符"
@@ -195,14 +197,15 @@ def parse_date(value: str | date) -> date | None:
 def classify_checkin(checkin: datetime, class_date: date, start: time) -> tuple[str, str]:
     """Compare check-in with class_date + start_time in Asia/Hong_Kong.
 
-    check-in <= start → 準時出席
-    start < check-in <= start + 15 minutes → 遲到
+    check-in <= start + 5 minutes → 準時出席
+    start + 5 minutes < check-in <= start + 15 minutes → 遲到
     check-in > start + 15 minutes → 缺席
     """
     checkin = as_hong_kong(checkin)
     start_dt = datetime.combine(class_date, start.replace(second=0, microsecond=0))
-    late_deadline = start_dt + timedelta(minutes=15)
-    if checkin <= start_dt:
+    on_time_deadline = start_dt + ON_TIME_BUFFER
+    late_deadline = start_dt + LATE_LIMIT
+    if checkin <= on_time_deadline:
         return STATUS_ON_TIME, EMAIL_ON_TIME
     if checkin <= late_deadline:
         return STATUS_LATE, EMAIL_LATE
@@ -1263,7 +1266,7 @@ def _save_tokens(tokens: dict, data_dir: Path | None = None) -> None:
 
 
 def _grant_is_open(entry: dict, now: datetime) -> bool:
-    """A claimed code stays valid for the rest of check-in, past the 30-second QR."""
+    """A claimed code stays valid for the rest of check-in, past the 60-second QR."""
     raw = entry.get("grant_expires_at")
     if not raw:
         return False
@@ -1295,7 +1298,7 @@ def _prune_tokens(tokens: dict, now: datetime) -> dict:
 
 
 def current_qr_token(class_date: str, start: str, end: str, data_dir: Path | None = None) -> dict:
-    """Keep one token for 30 seconds, then replace it."""
+    """Keep one token for 60 seconds, then replace it."""
     now = datetime.now().replace(microsecond=0)
     with _DATA_LOCK:
         tokens = _prune_tokens(_load_tokens(data_dir), now)
@@ -2166,7 +2169,7 @@ def _render_qr_screen(saved: dict) -> None:
     st.caption(f"上課時間 Class time：{saved.get('start_time', '')}–{saved.get('end_time', '')}")
     st.caption(f"校園 Campus：{campus or '—'}")
     render_live_qr(str(saved.get("class_date", "")), str(saved.get("start_time", "")), str(saved.get("end_time", "")))
-    st.caption("上課時間或之前是準時出席，15 分鐘內是遲到，超過 15 分鐘是缺席。點名要開啟一次定位，不需拍照。 At or before the start time is on time. Within 15 minutes is late. After 15 minutes is absent. Check-in needs one location reading and no photo.")
+    st.caption("上課時間後 5 分鐘內是準時出席，之後至 15 分鐘是遲到，超過 15 分鐘是缺席。點名要開啟一次定位，不需拍照。 Check-in up to 5 minutes after the start time is on time. After that, until 15 minutes, is late. After 15 minutes is absent. Check-in needs one location reading and no photo.")
     if saved.get("remarks"):
         st.caption(f"備註 Remarks：{saved['remarks']}")
 
@@ -2230,7 +2233,7 @@ def render_checkin_result(result: dict) -> None:
     st.warning(notice)
 
 
-@st.fragment(run_every=timedelta(seconds=30))
+@st.fragment(run_every=QR_TTL)
 def render_live_qr(class_date: str, start: str, end: str) -> None:
     origin = student_origin()
     if not origin.startswith("https://"):
