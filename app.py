@@ -2197,19 +2197,10 @@ def _render_qr_screen(saved: dict) -> None:
     if saved.get("report_sent"):
         sent_at = saved.get("report_sent_at") or ""
         st.success(f"報告已於 {sent_at} 發送，不會再寄一次。 The report was sent at {sent_at} and will not be sent again.")
+    elif end_prompt_needed(saved):
+        st.info("已過下課時間，報告會自動寄給老師。 The class end time has passed. The report is sent to the teacher automatically.")
     else:
-        if end_prompt_needed(saved):
-            st.warning("已過下課時間，報告會自動寄給老師。若仍未寄出，可按下面的按鈕再試一次。 The class end time has passed. The report is sent to the teacher automatically. If it has not gone out, press the button below to try again.")
-        if st.button("結束課堂並發送報告 End class and send report"):
-            with st.spinner("正在發送報告… Sending the report…"):
-                result = finish_class()
-            if result.get("email_sent"):
-                st.session_state.flash_level = "success"
-                st.session_state.flash_text = result["message"]
-            else:
-                st.session_state.flash_level = "warning"
-                st.session_state.flash_text = result["message"]
-            st.rerun()
+        st.caption("下課時間過後，出席報告會自動寄給老師。 After the end time, the attendance report is sent to the teacher automatically.")
 
     if st.button("更改課堂 Change class"):
         st.session_state.show_qr = False
