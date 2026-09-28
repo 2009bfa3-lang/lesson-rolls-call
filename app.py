@@ -80,6 +80,8 @@ GPS_DENIED = "請按網址列左邊的圖示，開啟網站設定，將位置設
 QR_TTL = timedelta(seconds=60)
 ON_TIME_BUFFER = timedelta(minutes=5)
 LATE_LIMIT = timedelta(minutes=15)
+COUNT_REFRESH = timedelta(minutes=15)
+REPORT_CHECK_SECONDS = 30
 LOCATION_RADIUS_M = 200
 LOCATION_UNSET = "未設定課堂位置"
 LOCATION_MATCH = "位置相符"
@@ -1027,13 +1029,19 @@ def _send_student_after_save(to_email: str, body_text: str) -> tuple[bool, str]:
     return True, ""
 
 
-def teacher_report_body(session: dict, data_dir: Path | None = None) -> str:
-    attendance = load_attendance(data_dir)
+def attendance_counts(data_dir: Path | None = None) -> dict[str, int]:
     counts = {STATUS_ON_TIME: 0, STATUS_LATE: 0, STATUS_ABSENT: 0}
-    if not attendance.empty:
-        for status in attendance["status"].tolist():
-            if status in counts:
-                counts[status] += 1
+    attendance = load_attendance(data_dir)
+    if attendance.empty or "status" not in attendance.columns:
+        return counts
+    for status in attendance["status"].tolist():
+        if status in counts:
+            counts[status] += 1
+    return counts
+
+
+def teacher_report_body(session: dict, data_dir: Path | None = None) -> str:
+    counts = attendance_counts(data_dir)
     remarks = session.get("remarks") or "（無） None"
     return (
         "附件是這一節的出席紀錄。 The attached file is this lesson's attendance record.\n\n"
@@ -1098,6 +1106,25 @@ def _finish_class(data_dir: Path | None = None) -> dict:
         session["report_sent_at"] = hong_kong_now().isoformat(timespec="seconds")
         save_session(session, data_dir)
     return {"ok": True, "email_sent": True, "message": "已把出席報告寄給老師。 The attendance report was sent to the teacher."}
+
+
+def _report_watcher() -> None:
+    """Send the teacher report once the lesson end time has passed."""
+    while True:
+        try:
+            session = load_session()
+            if session and end_prompt_needed(session):
+                finish_class()
+        except Exception:
+            pass
+        threading.Event().wait(REPORT_CHECK_SECONDS)
+
+
+@st.cache_resource
+def _start_report_watcher() -> threading.Thread:
+    thread = threading.Thread(target=_report_watcher, name="rolls-call-report", daemon=True)
+    thread.start()
+    return thread
 
 
 def normalize_base(base: str) -> str:
@@ -1999,19 +2026,6 @@ def render_attendance_board() -> None:
     except Exception:
         st.warning("出席表正在更新，請稍候。 The attendance sheet is updating. Please wait.")
         return
-    on_time = late = absent = 0
-    if not attendance.empty:
-        for status in attendance["status"].tolist():
-            if status == STATUS_ON_TIME:
-                on_time += 1
-            elif status == STATUS_LATE:
-                late += 1
-            elif status == STATUS_ABSENT:
-                absent += 1
-    left, middle, right = st.columns(3)
-    left.metric("準時出席 On time", on_time)
-    middle.metric("遲到 Late", late)
-    right.metric("缺席 Absent", absent)
     if attendance.empty:
         st.info("這一節還沒有人點名。 Nobody has checked in for this lesson yet.")
         return
@@ -2169,6 +2183,7 @@ def _render_qr_screen(saved: dict) -> None:
     st.caption(f"上課時間 Class time：{saved.get('start_time', '')}–{saved.get('end_time', '')}")
     st.caption(f"校園 Campus：{campus or '—'}")
     render_live_qr(str(saved.get("class_date", "")), str(saved.get("start_time", "")), str(saved.get("end_time", "")))
+    render_attendance_counts()
     st.caption("上課時間後 5 分鐘內是準時出席，之後至 15 分鐘是遲到，超過 15 分鐘是缺席。點名要開啟一次定位，不需拍照。 Check-in up to 5 minutes after the start time is on time. After that, until 15 minutes, is late. After 15 minutes is absent. Check-in needs one location reading and no photo.")
     if saved.get("remarks"):
         st.caption(f"備註 Remarks：{saved['remarks']}")
@@ -2177,13 +2192,14 @@ def _render_qr_screen(saved: dict) -> None:
     render_attendance_board()
     st.button("重新整理出席 Refresh attendance")
 
+    refresh_after_report()
     st.subheader("結束課堂 End class")
     if saved.get("report_sent"):
         sent_at = saved.get("report_sent_at") or ""
         st.success(f"報告已於 {sent_at} 發送，不會再寄一次。 The report was sent at {sent_at} and will not be sent again.")
     else:
         if end_prompt_needed(saved):
-            st.warning("已過下課時間，請按「結束課堂並發送報告」寄出出席報告。 The class end time has passed. Press End class and send report to email the attendance report.")
+            st.warning("已過下課時間，報告會自動寄給老師。若仍未寄出，可按下面的按鈕再試一次。 The class end time has passed. The report is sent to the teacher automatically. If it has not gone out, press the button below to try again.")
         if st.button("結束課堂並發送報告 End class and send report"):
             with st.spinner("正在發送報告… Sending the report…"):
                 result = finish_class()
@@ -2231,6 +2247,37 @@ def render_checkin_result(result: dict) -> None:
     if notice not in {STUDENT_EMAIL_FAILED, STUDENT_EMAIL_SKIPPED}:
         notice = STUDENT_EMAIL_FAILED
     st.warning(notice)
+
+
+@st.fragment(run_every=COUNT_REFRESH)
+def render_attendance_counts() -> None:
+    """Three totals under the QR code, refreshed every 15 minutes."""
+    try:
+        counts = attendance_counts()
+    except Exception:
+        st.warning("出席人數正在更新，請稍候。 The attendance counts are updating. Please wait.")
+        return
+    left, middle, right = st.columns(3)
+    left.metric("準時出席 On time", counts[STATUS_ON_TIME])
+    middle.metric("遲到 Late", counts[STATUS_LATE])
+    right.metric("缺席 Absent", counts[STATUS_ABSENT])
+    st.caption("人數每 15 分鐘自動更新。 These counts refresh every 15 minutes.")
+
+
+@st.fragment(run_every=timedelta(seconds=60))
+def refresh_after_report() -> None:
+    """Show the sent notice after the background report goes out."""
+    saved = load_session() or {}
+    sent_at = str(saved.get("report_sent_at") or "")
+    if "shown_report_sent_at" not in st.session_state:
+        st.session_state.shown_report_sent_at = sent_at
+        return
+    if not sent_at or sent_at == st.session_state.shown_report_sent_at:
+        return
+    st.session_state.shown_report_sent_at = sent_at
+    st.session_state.flash_level = "success"
+    st.session_state.flash_text = "已把出席報告寄給老師。 The attendance report was sent to the teacher."
+    st.rerun()
 
 
 @st.fragment(run_every=QR_TTL)
@@ -2506,6 +2553,7 @@ def render_student(event: str, start: str, end: str, token: str) -> None:
 
 
 def main() -> None:
+    _start_report_watcher()
     st.set_page_config(page_title="課堂點名系統 Lesson roll call", page_icon="📋", layout="centered")
     inject_css()
     ensure_data_dir()
