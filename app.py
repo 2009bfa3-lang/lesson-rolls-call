@@ -1292,15 +1292,36 @@ def _save_tokens(tokens: dict, data_dir: Path | None = None) -> None:
     _atomic_write(_tokens_path(data_dir), json.dumps(tokens, ensure_ascii=False, indent=2).encode("utf-8"))
 
 
-def _grant_is_open(entry: dict, now: datetime) -> bool:
-    """A claimed code stays valid for the rest of check-in, past the 60-second QR."""
-    raw = entry.get("grant_expires_at")
+def _record_is_open(record: dict, now: datetime) -> bool:
+    raw = record.get("grant_expires_at")
     if not raw:
         return False
     try:
         return now < datetime.fromisoformat(str(raw))
     except ValueError:
         return False
+
+
+def _grant_records(entry: dict) -> dict[str, dict]:
+    """Every check-in grant on this QR, including a claim saved before many students could share it."""
+    records: dict[str, dict] = {}
+    grants = entry.get("grants")
+    if isinstance(grants, dict):
+        for grant, record in grants.items():
+            if isinstance(record, dict):
+                records[str(grant)] = record
+    legacy = str(entry.get("grant") or "")
+    if legacy and legacy not in records:
+        records[legacy] = {
+            "grant_expires_at": entry.get("grant_expires_at"),
+            "student": entry.get("student"),
+        }
+    return records
+
+
+def _grant_is_open(entry: dict, now: datetime) -> bool:
+    """A claimed code stays valid for the rest of check-in, past the 60-second QR."""
+    return any(_record_is_open(record, now) for record in _grant_records(entry).values())
 
 
 def _prune_tokens(tokens: dict, now: datetime) -> dict:
@@ -1359,12 +1380,12 @@ def current_qr_token(class_date: str, start: str, end: str, data_dir: Path | Non
 
 
 def claim_qr_token(token: str, class_date: str, start: str, end: str, data_dir: Path | None = None) -> str:
-    """Mark a QR token used and return a check-in grant. Empty if the code is no longer valid."""
+    """Give this student their own check-in grant. The same QR can be opened by the whole class until it expires."""
     now = datetime.now()
     with _DATA_LOCK:
         tokens = _load_tokens(data_dir)
         entry = tokens.get(token)
-        if not isinstance(entry, dict) or entry.get("used"):
+        if not isinstance(entry, dict):
             return ""
         if entry.get("class_date") != class_date or entry.get("start_time") != start or entry.get("end_time") != end:
             return ""
@@ -1375,9 +1396,11 @@ def claim_qr_token(token: str, class_date: str, start: str, end: str, data_dir: 
         if now >= expires:
             return ""
         grant = secrets.token_urlsafe(16)
-        entry["used"] = True
-        entry["grant"] = grant
-        entry["grant_expires_at"] = (now + GRANT_TTL).isoformat(timespec="seconds")
+        grants = entry.get("grants")
+        if not isinstance(grants, dict):
+            grants = {}
+        grants[grant] = {"grant_expires_at": (now + GRANT_TTL).isoformat(timespec="seconds")}
+        entry["grants"] = grants
         tokens[token] = entry
         _save_tokens(tokens, data_dir)
         return grant
@@ -1390,17 +1413,18 @@ def resume_qr_grant(token: str, grant: str, class_date: str, start: str, end: st
     now = datetime.now()
     with _DATA_LOCK:
         entry = _load_tokens(data_dir).get(token)
-        if not isinstance(entry, dict) or not entry.get("used"):
+        if not isinstance(entry, dict):
             return False
-        if entry.get("grant") != grant:
+        record = _grant_records(entry).get(grant)
+        if record is None:
             return False
         if entry.get("class_date") != class_date or entry.get("start_time") != start or entry.get("end_time") != end:
             return False
-        return _grant_is_open(entry, now)
+        return _record_is_open(record, now)
 
 
 def remember_student_on_grant(token: str, grant: str, student: dict, data_dir: Path | None = None) -> None:
-    """Keep the verified student on the grant so the GPS redirect can restore them."""
+    """Keep the verified student on that student's grant so the GPS redirect can restore them."""
     if not token or not grant or not isinstance(student, dict):
         return
     record = {
@@ -1413,11 +1437,20 @@ def remember_student_on_grant(token: str, grant: str, student: dict, data_dir: P
     with _DATA_LOCK:
         tokens = _load_tokens(data_dir)
         entry = tokens.get(token)
-        if not isinstance(entry, dict) or entry.get("grant") != grant:
+        if not isinstance(entry, dict):
             return
-        if entry.get("student") == record:
+        grants = entry.get("grants")
+        if isinstance(grants, dict) and isinstance(grants.get(grant), dict):
+            if grants[grant].get("student") == record:
+                return
+            grants[grant]["student"] = record
+            entry["grants"] = grants
+        elif entry.get("grant") == grant:
+            if entry.get("student") == record:
+                return
+            entry["student"] = record
+        else:
             return
-        entry["student"] = record
         tokens[token] = entry
         _save_tokens(tokens, data_dir)
 
@@ -1426,9 +1459,12 @@ def student_on_grant(token: str, grant: str, data_dir: Path | None = None) -> di
     if not token or not grant:
         return None
     entry = _load_tokens(data_dir).get(token)
-    if not isinstance(entry, dict) or entry.get("grant") != grant:
+    if not isinstance(entry, dict):
         return None
-    student = entry.get("student")
+    record = _grant_records(entry).get(grant)
+    if record is None:
+        return None
+    student = record.get("student")
     if not isinstance(student, dict):
         return None
     name = str(student.get("student_name", "")).strip()
